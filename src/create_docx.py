@@ -1,7 +1,6 @@
 from os.path import exists
 import re
 from docx import Document
-from docx.shared import Inches
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.opc.constants import RELATIONSHIP_TYPE
@@ -11,13 +10,31 @@ import io
 
 def load_templates():
     """Loads presentation templates"""
-    custom_template = Path(__file__).parent / "template.docx"
-    if exists(custom_template):
-        template = custom_template
-    else:
-        # If no template found, create a blank document
-        return None
-    return str(template)
+    # Get the current working directory
+    current_dir = Path.cwd()
+
+    # Try multiple potential template locations for custom templates first
+    custom_template_paths = [
+        # Production: if working directory is 'app', templates should be in app/templates
+        current_dir / "templates" / "template.docx",
+        # Development: if running from src folder, go up one level to find templates
+        current_dir.parent / "templates" / "template.docx",
+        # Fallback: relative to this script's location
+        Path(__file__).parent.parent / "templates" / "template.docx"
+    ]
+
+    # Check for custom templates first
+    for template_path in custom_template_paths:
+        if template_path.exists():
+            return str(template_path)
+
+    # Fallback to built-in template in src folder
+    fallback_template = Path(__file__).parent / "template.docx"
+    if fallback_template.exists():
+        return str(fallback_template)
+
+    # If no template found, return None
+    return None
 
 def add_hyperlink(paragraph, text, url, color="0000FF", underline=True):
     """Adds a hyperlink to a paragraph"""
