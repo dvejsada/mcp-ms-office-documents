@@ -8,15 +8,6 @@ from create_msg import create_eml
 
 mcp = FastMCP("MCP Office Documents")
 
-# Pydantic models for PowerPoint slides
-class SlideText(BaseModel):
-    """Individual bullet point for content slides."""
-    text: str = Field(description="Text content of the bullet point")
-    indentation_level: int = Field(
-        ge=1,
-        le=5,
-        description="Bullet indentation level: 1=main bullet, 2=sub-bullet, 3=sub-sub-bullet, etc. (converted to PowerPoint levels 0-4 internally)"
-    )
 
 class PowerPointSlide(BaseModel):
     """PowerPoint slide - can be title, section, or content slide based on slide_type."""
@@ -25,7 +16,7 @@ class PowerPointSlide(BaseModel):
 
     # Optional fields based on slide type
     author: Optional[str] = Field(default="", description="Author name for title slides - appears in subtitle placeholder. Leave empty for section/content slides.")
-    slide_text: Optional[List[SlideText]] = Field(
+    slide_text: Optional[List[Dict]] = Field(
         default=None,
         description="Array of bullet points for content slides. Each bullet point must have 'text' (string) and 'indentation_level' (integer 1-5). Leave empty/null for title and section slides."
     )
