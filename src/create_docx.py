@@ -12,7 +12,7 @@ def load_templates():
     """Loads presentation templates"""
     # Get the current working directory
     current_dir = Path.cwd()
-
+    
     # Try multiple potential template locations for custom templates first
     custom_template_paths = [
         # Production: if working directory is 'app', templates should be in app/templates
@@ -22,12 +22,12 @@ def load_templates():
         # Fallback: relative to this script's location
         Path(__file__).parent.parent / "templates" / "template.docx"
     ]
-
+    
     # Check for custom templates first
     for template_path in custom_template_paths:
         if template_path.exists():
             return str(template_path)
-
+    
     # Fallback to built-in template in src folder
     fallback_template = Path(__file__).parent / "template.docx"
     if fallback_template.exists():
