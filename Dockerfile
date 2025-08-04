@@ -36,17 +36,20 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=bind,source=requirements.txt,target=requirements.txt \
     python -m pip install -r requirements.txt
 
-RUN mkdir output
-RUN mkdir templates
-
-# Switch to the non-privileged user to run the application.
-USER appuser
+# Create directories for output and custom templates
+RUN mkdir -p output templates
 
 # Copy the source code into the container.
 COPY src/ src/
+
+# Change ownership of directories to appuser
+RUN chown -R appuser:appuser /app/output /app/templates
+
+# Switch to the non-privileged user to run the application.
+USER appuser
 
 # Expose the port that the application listens on.
 EXPOSE 8958
 
 # Run the application.
-CMD python /app/src/run_sse.py
+CMD python /app/src/main.py

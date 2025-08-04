@@ -21,14 +21,14 @@ def load_templates():
     # Try multiple potential template locations for custom templates first
     custom_template_paths = [
         # Production: if working directory is 'app', templates should be in app/templates
-        (current_dir / "templates" / "template_general_4_3.pptx",
-         current_dir / "templates" / "template_general_16_9.pptx"),
+        (current_dir / "templates" / "template_4_3.pptx",
+         current_dir / "templates" / "template_16_9.pptx"),
         # Development: if running from src folder, go up one level to find templates
-        (current_dir.parent / "templates" / "template_general_4_3.pptx",
-         current_dir.parent / "templates" / "template_general_16_9.pptx"),
+        (current_dir.parent / "templates" / "template_4_3.pptx",
+         current_dir.parent / "templates" / "template_16_9.pptx"),
         # Fallback: relative to this script's location
-        (Path(__file__).parent.parent / "templates" / "template_general_4_3.pptx",
-         Path(__file__).parent.parent / "templates" / "template_general_16_9.pptx")
+        (Path(__file__).parent.parent / "templates" / "template_4_3.pptx",
+         Path(__file__).parent.parent / "templates" / "template_16_9.pptx")
     ]
 
     # Check for custom templates first

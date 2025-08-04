@@ -1,14 +1,34 @@
 from fastmcp import FastMCP
-from pydantic import Field
-from typing import Annotated, List, Dict, Any, Optional
-import io
+from pydantic import BaseModel, Field
+from typing import Annotated, List, Dict, Any, Optional, Literal, Union
 from create_xlsx import markdown_to_excel
 from create_docx import markdown_to_word
 from create_pptx import create_presentation
 from create_msg import create_eml
-from upload_file import upload_file
 
 mcp = FastMCP("MCP Office Documents")
+
+# Pydantic models for PowerPoint slides
+class SlideText(BaseModel):
+    """Individual bullet point for content slides."""
+    text: str = Field(description="Text content of the bullet point")
+    indentation_level: int = Field(
+        ge=1,
+        le=5,
+        description="Bullet indentation level: 1=main bullet, 2=sub-bullet, 3=sub-sub-bullet, etc. (converted to PowerPoint levels 0-4 internally)"
+    )
+
+class PowerPointSlide(BaseModel):
+    """PowerPoint slide - can be title, section, or content slide based on slide_type."""
+    slide_type: Literal["title", "section", "content"] = Field(description="Type of slide: 'title' for presentation opening, 'section' for dividers, 'content' for slide with bullet points")
+    slide_title: str = Field(description="Title text for the slide")
+
+    # Optional fields based on slide type
+    author: Optional[str] = Field(default="", description="Author name for title slides - appears in subtitle placeholder. Leave empty for section/content slides.")
+    slide_text: Optional[List[SlideText]] = Field(
+        default=None,
+        description="Array of bullet points for content slides. Each bullet point must have 'text' (string) and 'indentation_level' (integer 1-5). Leave empty/null for title and section slides."
+    )
 
 @mcp.tool(
     name="create_excel_from_markdown",
@@ -21,34 +41,6 @@ async def create_excel_document(
 ) -> str:
     """
     Converts markdown to Excel with advanced formula support.
-
-    CRITICAL - Formula Syntax (USE ONLY THESE FORMATS):
-    - Within table: =B[0]+C[0] (current row), =SUM(B[0]:E[0]) (range)
-    - Cross-table: =T1.B[0] (Table 1, first data row), =T1.SUM(C[0]:F[2]) (Table 1, range)
-    - Functions: SUM, AVERAGE, MAX, MIN with ranges using [offset] notation
-
-    IMPORTANT - Row Indexing Rules:
-    - ALWAYS use bracket notation: [0], [1], [2], etc.
-    - NEVER use absolute row numbers like B2, B3, C4
-    - [0] = FIRST DATA ROW (after header)
-    - [1] = SECOND DATA ROW
-    - [2] = THIRD DATA ROW, and so on
-    - Headers are automatically styled and excluded from indexing
-
-    Examples (CORRECT):
-    - =T1.B[0]+T1.B[1]+T1.B[2] (sum first 3 data rows from Table 1, column B)
-    - =B[0]+C[0]+D[0] (sum current row across columns B, C, D)
-    - =T2.SUM(B[0]:E[3]) (sum range in Table 2 from first to fourth data row)
-
-    Examples (WRONG - DO NOT USE):
-    - =T1.B2+T1.B3+T1.B4 (absolute row numbers not supported)
-    - =B2+C2+D2 (absolute row numbers not supported)
-
-    Features:
-    - Auto-formats numbers, percentages, and currencies
-    - Professional styling with borders and headers
-    - Cross-table formula resolution
-    - Position-independent references
     """
 
     print(f"Converting markdown to Excel document")
@@ -74,38 +66,6 @@ async def create_word_document(
     """
     Converts markdown to professionally formatted Word document.
 
-    DOCUMENT STRUCTURE GUIDELINES:
-
-    FOR LEGAL CONTRACTS:
-    - Use numbered lists for sections: 1. Článek I - Předmět smlouvy
-    - Use nested numbered lists for provisions:
-      1. Section heading
-         1. First provision
-         2. Second provision
-      2. Next section heading
-         1. First provision (automatically restarts at 1)
-         2. Second provision
-    - DO NOT use headers (# ## ###) in contracts
-
-    FOR LETTERS, MEMOS, REPORTS:
-    - Use headers for sections: # Main Title, ## Section, ### Subsection
-    - Use lists for bullet points or numbered items within sections
-    - Headers provide proper document outline structure
-
-    Supported Markdown:
-    - Headers: # ## ### (for letters/memos/reports)
-    - Tables: | Column | Column | (with borders)
-    - Lists: - bullet or 1. numbered (with automatic nesting)
-    - Formatting: **bold**, *italic*, `code`, [links](url)
-    - Block quotes: > quoted text
-    - Line breaks: two spaces at end of line
-
-    Features:
-    - Professional styling and fonts
-    - Proper table formatting
-    - Word's automatic list numbering with restart
-    - Hyperlink creation
-    - Template support
     """
 
     print(f"Converting markdown to Word document")
@@ -121,34 +81,27 @@ async def create_word_document(
 
 @mcp.tool(
     name="create_powerpoint_presentation",
-    description="Creates PowerPoint (.pptx) presentations with multiple slide types.",
+    description="Creates PowerPoint presentations with professional templates using structured slide models.",
     tags={"powerpoint", "presentation", "slides"},
     annotations={"title": "PowerPoint Presentation Creator"}
 )
 async def create_powerpoint_presentation(
-    slides: Annotated[List[Dict[str, Any]], Field(description="List of slide dictionaries. Each slide must have 'slide_type' (title/section/content), 'slide_title', and content based on type.")],
-    format: Annotated[str, Field(description="Presentation format: '4:3' for traditional or '16:9' for widescreen", default="16:9")]
+    slides: List[PowerPointSlide],
+    format: Annotated[Literal["4:3", "16:9"], Field(
+        default="4:3",
+        description="Presentation formating: '4:3' for traditional or '16:9' for widescreen"
+    )]
 ) -> str:
-    """
-    Creates PowerPoint presentations with professional templates.
-
-    Slide Types:
-    - title: {"slide_type": "title", "slide_title": "Title", "author": "Author"}
-    - section: {"slide_type": "section", "slide_title": "Section Title"}
-    - content: {"slide_type": "content", "slide_title": "Title", "slide_text": [{"text": "Bullet point", "indentation_level": 1}]}
-
-    Features:
-    - Professional templates (4:3 and 16:9 formats)
-    - Multi-level bullet points
-    - Consistent styling
-    - Custom layouts for different slide types
-    """
+    """Creates PowerPoint presentations with structured slide models and professional templates."""
 
     print(f"Creating PowerPoint presentation with {len(slides)} slides in {format} format")
 
     try:
+        # Convert Pydantic models to dictionaries for the create_presentation function
+        slides_data = [slide.model_dump() for slide in slides]
+
         # create_presentation already handles upload internally and returns URL
-        result = create_presentation(slides, format)
+        result = create_presentation(slides_data, format)
         print(f"PowerPoint presentation created: {result}")
         return result
     except Exception as e:
@@ -172,35 +125,6 @@ async def create_email_draft(
 ) -> str:
     """
     Creates professional email drafts in EML format with preset styling and language settings.
-
-    IMPORTANT - Content Guidelines:
-    - Provide ONLY the body content of the email
-    - Do NOT include <html>, <head>, <body>, or <style> tags
-    - Do NOT include any CSS styling or inline styles
-
-    PROPER USAGE OF TAGS:
-    - Greetings & Signatures: Use <p>Vážený klientě,</p> and <p>S pozdravem,<br>Váš tým</p>
-    - Main sections: Use <h2>Kontrola a doplnění údajů</h2> (will appear bold)
-    - Subsections: Use <h3>Mzdové podmínky</h3> (will appear underlined)
-    - Regular text: Use <p> for paragraphs
-    - Lists: <ul>, <ol>, <li>
-    - Emphasis: <strong>, <em>
-
-    Features:
-    - Consistent formatting (Arial font, same color for all text)
-    - Simple styling: H2 = bold, H3 = underlined
-    - Language settings for Outlook proofreading/spell-check
-    - Multiple recipient types (To, CC, BCC)
-    - Priority settings (low/normal/high)
-    - UTF-8 encoding for international characters
-
-    Common Language Codes:
-    - cs-CZ: Czech (Czech Republic)
-    - en-US: English (United States)
-    - en-GB: English (United Kingdom)
-    - de-DE: German (Germany)
-    - sk-SK: Slovak (Slovakia)
-    - fr-FR: French (France)
     """
 
     print(f"Creating email draft with subject: {subject}")

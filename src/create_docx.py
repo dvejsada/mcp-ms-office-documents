@@ -26,14 +26,17 @@ def load_templates():
     # Check for custom templates first
     for template_path in custom_template_paths:
         if template_path.exists():
+            print(template_path)
             return str(template_path)
     
     # Fallback to built-in template in src folder
     fallback_template = Path(__file__).parent / "template.docx"
     if fallback_template.exists():
+        print(fallback_template)
         return str(fallback_template)
 
     # If no template found, return None
+    print("No template found, will create a blank document")
     return None
 
 def add_hyperlink(paragraph, text, url, color="0000FF", underline=True):
