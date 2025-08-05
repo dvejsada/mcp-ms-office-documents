@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/dvejsada-mcp-ms-office-documents-badge.png)](https://mseep.ai/app/dvejsada-mcp-ms-office-documents)
+
 ## What is it?
 
 A [Model Context Protocol](https://modelcontextprotocol.io/) Server running over SSE
