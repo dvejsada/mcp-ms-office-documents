@@ -50,7 +50,7 @@ environment:
   UPLOAD_STRATEGY: S3
   AWS_ACCESS_KEY: your_access_key
   AWS_SECRET_ACCESS_KEY: your_secret_key  
-  AWS_REGION: us-east-1
+  AWS_REGION: your-region
   S3_BUCKET: your-bucket-name
 ```
 
@@ -63,7 +63,7 @@ Add this configuration to your `librechat.yaml` file:
 ```yaml
 mcpServers:
   office-docs:
-    type: sse
+    type: streamable-http
     url: http://localhost:8958/sse  # Adjust URL if running on different host
     timeout: 120000  # Allow extra time for document generation
 ```
@@ -141,5 +141,4 @@ Contributions are welcome! Feel free to submit issues, feature requests, or pull
 - [x] Word documents (docx)
 - [x] Email drafts (eml)
 - [x] Excel spreadsheets (xlsx)
-- [ ] Outlook calendar appointments (ics)
 - [ ] Additional template customization options
