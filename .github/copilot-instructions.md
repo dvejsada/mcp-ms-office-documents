@@ -73,66 +73,6 @@ def load_templates():
     # 4. Fallback to default library templates
 ```
 
-## Document Creation Workflows
-
-### PowerPoint Presentations
-
-- Uses structured slide models with `PowerPointSlide` Pydantic class
-- Supports three slide types: title, section, content
-- Configurable aspect ratios (4:3, 16:9)
-- Template-based layout with professional formatting
-
-### Word Documents
-
-- Converts Markdown to Word with rich formatting
-- Supports headers, tables, lists, hyperlinks, block quotes
-- Special handling for legal contracts (numbered lists vs headers)
-- Template-based styling for consistency
-
-### Excel Spreadsheets
-
-- Advanced formula support with relative references (`B[0]`, `T1.B[1]`)
-- Cross-table references for complex calculations
-- Markdown table parsing with cell formatting
-- Bold/italic text support in cells
-
-### Email Drafts
-
-- EML format with HTML content and professional styling
-- Configurable recipients (to, cc, bcc)
-- Priority levels and language settings for Outlook
-- Preset CSS styling for professional appearance
-
-## Development Guidelines
-
-### Adding New Document Types
-
-1. Create new module in `src/create_[type].py`
-2. Implement template loading with fallback pattern
-3. Add MCP tool definition in `main.py`
-4. Follow error handling and logging patterns
-5. Update README.md with usage examples
-
-### Template Management
-
-- Place custom templates in `/app/templates` (Docker volume)
-- Built-in templates in `src/` directory
-- Use consistent naming: `template_4_3.pptx`, `template.docx`
-- PowerPoint: Layout indices must be 3rd (title), 5th (content), 8th (section)
-
-### Environment Configuration
-
-Key environment variables:
-- `UPLOAD_STRATEGY`: "LOCAL" or "S3"
-- AWS credentials for S3 upload strategy
-- File paths for local storage
-
-### Code Quality
-
-- Use type hints with `Annotated` and `Field` for MCP parameters
-- Comprehensive parameter descriptions for AI assistant clarity
-- Consistent logging with module-level loggers
-- Defensive programming with try/catch blocks
 
 ## File Structure
 
