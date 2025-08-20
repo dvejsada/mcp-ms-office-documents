@@ -80,7 +80,7 @@ def load_email_config() -> Dict[str, Any]:
                 with open(config_path, 'r', encoding='utf-8') as f:
                     loaded_config = yaml.safe_load(f)
                     
-                # Merge loaded config with defaults (defaults as fallback)
+                # Merge loaded config with defaults (loaded values override defaults)
                 if loaded_config and 'email' in loaded_config:
                     merged_config = _merge_configs(default_config, loaded_config)
                     return merged_config
