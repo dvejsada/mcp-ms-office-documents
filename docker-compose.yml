@@ -14,3 +14,4 @@ services:
     volumes:
       - <host_path>:/app/output # Directory to save created presentations to, required for LOCAL upload strategy
       - <host_path>:/app/templates # Directory with custom templates, if used
+      - <host_path>:/app/config # Directory with config.yaml for email styling customization, optional

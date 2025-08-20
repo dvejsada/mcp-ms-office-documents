@@ -3,6 +3,7 @@ from email.mime.text import MIMEText
 from email.utils import formatdate
 from email.header import Header
 from upload_file import upload_file
+from email_config import get_email_config, generate_email_css
 
 
 def create_eml(to=None, cc=None, bcc=None, re=None, content=None, priority="normal", language="cs-CZ"):
@@ -36,6 +37,10 @@ def create_eml(to=None, cc=None, bcc=None, re=None, content=None, priority="norm
     if not re:
         raise ValueError("Email subject is required")
 
+    # Load email styling configuration
+    email_config = get_email_config()
+    css_styles = generate_email_css(email_config)
+
     # Create the complete HTML document with the provided content in the body
     complete_html = f"""
     <html lang="{language}">
@@ -43,33 +48,7 @@ def create_eml(to=None, cc=None, bcc=None, re=None, content=None, priority="norm
         <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
         <meta http-equiv="Content-Language" content="{language}">
         <style>
-            body {{
-                font-family: Arial, sans-serif;
-                font-size: 10pt;
-                color: rgb(0, 20, 137);
-                line-height: 1.4;
-            }}
-            h2 {{
-                font-weight: bold;
-                font-size: 10pt;
-                margin: 8px 0;
-            }}
-            h3 {{
-                text-decoration: underline;
-                font-size: 10pt;
-                font-weight: normal;
-                margin: 8px 0;
-            }}
-            p {{
-                margin: 8px 0;
-            }}
-            ul, ol {{
-                margin: 8px 0;
-                padding-left: 20px;
-            }}
-            li {{
-                margin: 3px 0;
-            }}
+            {css_styles}
         </style>
     </head>
     <body lang="{language}">

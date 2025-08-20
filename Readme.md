@@ -114,6 +114,41 @@ volumes:
 - PowerPoint: Title slide layout must be 3rd, content slide layout must be 5th, section slide layout must be 8th in master slides
 - Word: Must contain standard Word styles for proper formatting
 
+### Email Styling Customization
+
+Customize the appearance of generated email drafts with your own styling:
+
+1. Create a `config.yaml` file with your email styles (see `config.yaml` template in the repository)
+2. Mount the config directory:
+```yaml
+volumes:
+  - ./config:/app/config
+```
+
+**Example config.yaml for corporate branding:**
+```yaml
+email:
+  styles:
+    base:
+      body:
+        font-family: "Calibri, Arial, sans-serif"
+        font-size: "11pt"
+        color: "#333333"
+        line-height: "1.6"
+    elements:
+      h2:
+        font-weight: "bold"
+        font-size: "14pt"
+        color: "#1f4788"  # Corporate blue
+        border-bottom: "2px solid #1f4788"
+      h3:
+        font-weight: "bold"
+        color: "#1f4788"
+        text-decoration: "none"
+```
+
+If no config file is provided, emails will use the default styling.
+
 ### Usage Tips
 
 For best results when working with AI assistants:
@@ -141,4 +176,5 @@ Contributions are welcome! Feel free to submit issues, feature requests, or pull
 - [x] Word documents (docx)
 - [x] Email drafts (eml)
 - [x] Excel spreadsheets (xlsx)
+- [x] Email styling customization via config.yaml
 - [ ] Additional template customization options

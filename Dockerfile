@@ -36,14 +36,14 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=bind,source=requirements.txt,target=requirements.txt \
     python -m pip install -r requirements.txt
 
-# Create directories for output and custom templates
-RUN mkdir -p output templates
+# Create directories for output, custom templates, and config
+RUN mkdir -p output templates config
 
 # Copy the source code into the container.
 COPY src/ src/
 
 # Change ownership of directories to appuser
-RUN chown -R appuser:appuser /app/output /app/templates
+RUN chown -R appuser:appuser /app/output /app/templates /app/config
 
 # Switch to the non-privileged user to run the application.
 USER appuser
