@@ -33,7 +33,7 @@ email:
       # Heading 2 styles - used for section headers
       h2:
         font-weight: "bold"                 # Text weight (normal, bold, lighter, bolder, 100-900)
-        font-size: "10pt"                   # Font size (can be pt, px, em, %)
+        font-size: "30pt"                   # Font size (can be pt, px, em, %)
         margin: "8px 0"                     # Margin around the element (top/bottom left/right)
         # Additional options:
         # color: "#000000"                  # Override text color for headings

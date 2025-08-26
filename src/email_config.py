@@ -68,8 +68,7 @@ def load_email_config() -> Dict[str, Any]:
     # Potential config file locations
     config_paths = [
         Path("/app/config/config.yaml"),
-        Path("./config/config.yaml"),
-        Path("./config.yaml")
+        Path("config.yaml")
     ]
     
     # Try to load config from each location
