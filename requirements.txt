@@ -6,4 +6,4 @@ beautifulsoup4>=4.13.4
 openpyxl>=3.1.2
 fastmcp>=2.5.2
 pydantic>=2.11.5
-yaml
+PyYAML
