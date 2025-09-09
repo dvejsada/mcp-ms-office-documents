@@ -64,7 +64,7 @@ Add this configuration to your `librechat.yaml` file:
 mcpServers:
   office-docs:
     type: streamable-http
-    url: http://localhost:8958/sse  # Adjust URL if running on different host
+    url: http://localhost:8958/mcp  # Adjust URL if running on different host
     timeout: 120000  # Allow extra time for document generation
 ```
 
@@ -83,7 +83,7 @@ Add this configuration to your Claude Desktop MCP settings:
   "mcpServers": {
     "office-docs": {
       "command": "node",
-      "args": ["-e", "require('http').get('http://localhost:8958/sse')"]
+      "args": ["-e", "require('http').get('http://localhost:8958/mcp')"]
     }
   }
 }
@@ -91,7 +91,7 @@ Add this configuration to your Claude Desktop MCP settings:
 
 ### Other MCP Clients
 
-The server exposes an SSE (Server-Sent Events) endpoint at `/sse` and follows the standard MCP protocol. Consult your MCP client's documentation for connection details.
+The server exposes a streamable-http endpoint at `/mcp` and follows the standard MCP protocol. Consult your MCP client's documentation for connection details.
 
 ## 🎨 Advanced Features
 
