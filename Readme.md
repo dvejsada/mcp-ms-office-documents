@@ -10,6 +10,7 @@ Transform your conversations with AI into professional documents:
 - **📄 Word Documents** - Generate formatted documents from markdown including headers, tables, lists, and styling - perfect for reports, contracts, and documentation  
 - **📧 Email Drafts** - Compose professional email drafts in EML format with proper HTML formatting and styling
 - **📈 Excel Spreadsheets** - Build data-rich spreadsheets from markdown tables with formula support and cross-table references
+- **⚙️ Dynamic Email Template Tools** - Auto-generate additional specialized email draft tools via a simple Mustache-based YAML configuration
 
 All documents are created with professional templates and can be customized with your own branding.
 
@@ -102,7 +103,8 @@ Use your own company templates and branding:
 1. Create template files:
    - `template_4_3.pptx` (4:3 aspect ratio PowerPoint)
    - `template_16_9.pptx` (16:9 aspect ratio PowerPoint)  
-   - `template.docx` (Word document)
+   - `template.docx` (Word document)  
+   - `general_template.html` (email HTML wrapper / styling) – mount under `templates/` to override built‑in email appearance.
 
 2. Mount the template directory:
 ```yaml
@@ -113,41 +115,96 @@ volumes:
 **Template Requirements:**
 - PowerPoint: Title slide layout must be 3rd, content slide layout must be 5th, section slide layout must be 8th in master slides
 - Word: Must contain standard Word styles for proper formatting
+- Email: `general_template.html` must include Mustache placeholders `{{{content}}}` for body HTML, `{{subject}}` (optional for <title>), and may include `{{language}}`.
 
-### Email Styling Customization
+### Dynamic Email Template Tools (Simplified Mustache-Only)
 
-Customize the appearance of generated email drafts with your own styling:
+Define additional specialized email draft tools without writing Python code by placing an `email_templates.yaml` file in `config/` (mounted at `/app/config/email_templates.yaml`). On server startup each entry becomes its own MCP tool.
 
-1. Create a `config.yaml` file with your email styles (see `config.yaml` template in the repository)
-2. Mount the config directory:
+Example `config/email_templates.yaml`:
 ```yaml
-volumes:
-  - ./config:/app/config
+templates:
+  - name: welcome_email
+    description: Welcome email with optional promo code
+    html_path: templates/welcome_format.html
+    annotations:
+      title: Welcome Email (Dynamic)
+    args:
+      - name: first_name
+        type: string
+        required: true
+        description: Recipient first name
+      - name: promo_code
+        type: string
+        required: false
+        description: Optional promotional code
 ```
 
-**Example config.yaml for corporate branding:**
-```yaml
-email:
-  styles:
-    base:
-      body:
-        font-family: "Calibri, Arial, sans-serif"
-        font-size: "11pt"
-        color: "#333333"
-        line-height: "1.6"
-    elements:
-      h2:
-        font-weight: "bold"
-        font-size: "14pt"
-        color: "#1f4788"  # Corporate blue
-        border-bottom: "2px solid #1f4788"
-      h3:
-        font-weight: "bold"
-        color: "#1f4788"
-        text-decoration: "none"
+Template snippet (`templates/welcome_format.html`):
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <title>{{subject}}</title>
+  <style>
+    body { font-family: Calibri, Arial, sans-serif; font-size: 14px; color: #222; }
+    h2 { font-size: 18px; margin-bottom: 4px; }
+    .promo { background:#f5f5f5; padding:8px 12px; border-left:4px solid #0066cc; margin-top:16px; }
+  </style>
+</head>
+<body>
+  <h2>Welcome {{first_name}}!</h2>
+  <p>We're excited to have you on board.</p>
+  {{{promo_code_block}}}
+  <p style="margin-top:24px;">Regards,<br/>Support Team</p>
+</body>
+</html>
 ```
 
-If no config file is provided, emails will use the default styling.
+#### Placeholder Escaping vs Raw HTML
+
+Mustache offers two syntaxes for inserting values:
+
+- `{{variable}}` (double braces): Inserts the value with HTML escaping. Use this for normal text (names, emails, links, notes, etc.).
+- `{{{variable}}}` (triple braces): Inserts the value without escaping (raw HTML). Use only for values intended to contain simple HTML markup.
+
+#### Enumerations (enum)
+Add `enum: [value1, value2, ...]` to an argument in `email_templates.yaml` to restrict its accepted values. At runtime the tool will validate the value; invalid options are rejected before rendering. Example from `welcome_email`:
+```yaml
+- name: tone
+  type: string
+  required: false
+  enum: ["casual", "formal", "friendly"]
+  description: Tone variant inserted into template (enum)
+```
+If a `default` is provided it must be one of the listed values; otherwise it is ignored.
+
+#### Defaults (default)
+You can supply a `default:` value for any argument (enum or non‑enum). Notes:
+- If `required: false` and a default is present, the default is used when the caller omits the argument.
+- If `required: true` and you also give a default, the field effectively becomes optional (the default is applied when omitted).
+- For enum arguments the default must be one of the enum values (otherwise it is ignored and the field remains required/optional as specified).
+- Omit `default` entirely if you want the tool to force the caller to provide a value (set `required: true`).
+
+Example with enum default (shown in `welcome_email`):
+```yaml
+- name: tone
+  type: string
+  required: false
+  enum: ["casual", "formal", "friendly"]
+  default: "friendly"
+  description: Tone variant inserted into template
+```
+
+Example non‑enum default:
+```yaml
+- name: footer_note
+  type: string
+  required: false
+  default: "This message is confidential."
+  description: Optional footer line appended at the end
+```
 
 ### Usage Tips
 
@@ -156,6 +213,7 @@ For best results when working with AI assistants:
 - **Presentations**: Ask for structured content with clear sections and bullet points
 - **Documents**: Use markdown formatting in your requests for better results
 - **Emails**: Specify tone, recipients, and key points you want to cover
+- **Dynamic Email Tools**: Provide only the defined parameters; the server handles HTML assembly and uploading
 - **Spreadsheets**: Describe your data structure and any calculations needed
 
 See `instructions_template.md` for detailed agent configuration examples.
@@ -176,5 +234,4 @@ Contributions are welcome! Feel free to submit issues, feature requests, or pull
 - [x] Word documents (docx)
 - [x] Email drafts (eml)
 - [x] Excel spreadsheets (xlsx)
-- [x] Email styling customization via config.yaml
-- [ ] Additional template customization options
+- [x] Dynamic email template tools

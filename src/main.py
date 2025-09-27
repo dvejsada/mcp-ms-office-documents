@@ -1,13 +1,22 @@
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
-from typing import Annotated, List, Dict, Any, Optional, Literal, Union
+from typing import Annotated, List, Dict, Optional, Literal
 from create_xlsx import markdown_to_excel
 from create_docx import markdown_to_word
 from create_pptx import create_presentation
-from create_msg import create_eml
+from email_tools import create_eml
+from email_tools.dynamic_email_tools import register_email_template_tools_from_yaml
+from pathlib import Path
 
 mcp = FastMCP("MCP Office Documents")
 
+# Dynamic email tools: ONLY load from config/email_templates.yaml (legacy root file support removed)
+_config_dir = Path(__file__).resolve().parent.parent / "config"
+_primary_yaml = _config_dir / "email_templates.yaml"
+if _primary_yaml.exists():
+    register_email_template_tools_from_yaml(mcp, _primary_yaml)
+else:
+    print("[dynamic-email] No dynamic email templates file found at config/email_templates.yaml - skipping")
 
 class PowerPointSlide(BaseModel):
     """PowerPoint slide - can be title, section, or content slide based on slide_type."""
@@ -37,7 +46,6 @@ async def create_excel_document(
     print(f"Converting markdown to Excel document")
 
     try:
-        # markdown_to_excel now handles upload internally and returns URL
         result = markdown_to_excel(markdown_content)
         print(f"Excel document uploaded successfully")
         return result
@@ -62,7 +70,6 @@ async def create_word_document(
     print(f"Converting markdown to Word document")
 
     try:
-        # markdown_to_word now handles upload internally and returns URL
         result = markdown_to_word(markdown_content)
         print(f"Word document uploaded successfully")
         return result
@@ -88,10 +95,7 @@ async def create_powerpoint_presentation(
     print(f"Creating PowerPoint presentation with {len(slides)} slides in {format} format")
 
     try:
-        # Convert Pydantic models to dictionaries for the create_presentation function
         slides_data = [slide.model_dump() for slide in slides]
-
-        # create_presentation already handles upload internally and returns URL
         result = create_presentation(slides_data, format)
         print(f"PowerPoint presentation created: {result}")
         return result
@@ -121,7 +125,6 @@ async def create_email_draft(
     print(f"Creating email draft with subject: {subject}")
 
     try:
-        # create_eml already handles upload internally and returns URL
         result = create_eml(
             to=to,
             cc=cc,
