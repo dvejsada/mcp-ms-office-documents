@@ -4,6 +4,7 @@
 # Exclude user-uploaded templates and generated output files
 templates/
 output/
+config/
 
 # =============================================================================
 # PYTHON CACHE AND BUILD FILES

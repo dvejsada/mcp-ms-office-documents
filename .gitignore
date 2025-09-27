@@ -45,6 +45,7 @@ Thumbs.db
 # Output directory
 output/
 templates/
+config/
 
 # Temporary files
 *.tmp
