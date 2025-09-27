@@ -1,10 +1,10 @@
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
-from typing import Annotated, List, Dict, Any, Optional, Literal, Union
+from typing import Annotated, List, Dict, Optional, Literal
 from create_xlsx import markdown_to_excel
 from create_docx import markdown_to_word
 from create_pptx import create_presentation
-from create_msg import create_eml
+from email_draft import create_eml  # updated import path after refactor
 
 mcp = FastMCP("MCP Office Documents")
 

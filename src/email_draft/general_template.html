@@ -1,0 +1,21 @@
+<!-- Built-in email template (Mustache). Override by placing a file with the same name at /app/templates/general_template.html in production. -->
+<!DOCTYPE html>
+<html lang="{{language}}">
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <meta http-equiv="Content-Language" content="{{language}}" />
+    <title>{{subject}}</title>
+    <style>
+        body { font-family: Arial, sans-serif; font-size: 10pt; color: rgb(0, 20, 137); line-height: 1.4; margin:0; padding:0; }
+        h2 { font-weight: bold; font-size: 10pt; margin: 8px 0; }
+        h3 { text-decoration: underline; font-size: 10pt; font-weight: normal; margin: 8px 0; }
+        p { margin: 8px 0; }
+        ul, ol { margin: 8px 0; padding-left: 20px; }
+        li { margin: 3px 0; }
+    </style>
+</head>
+<body lang="{{language}}">
+{{{content}}}
+</body>
+</html>
+
