@@ -1,0 +1,20 @@
+# Dynamic email template tools configuration (Mustache-only)
+# Location: /app/config/email_templates.yaml inside container.
+# Base fields automatically added: subject (required), to, cc, bcc (optional lists)
+# Define only template-specific variables under args.
+
+templates:
+  - name: welcome_email
+    description: Welcome email with optional promo code
+    html_path: templates/welcome_format.html
+    annotations:
+      title: Welcome Email (Dynamic)
+    args:
+      - name: first_name
+        type: string
+        required: true
+        description: Recipient first name
+      - name: promo_code
+        type: string
+        required: false
+        description: Optional promotional code

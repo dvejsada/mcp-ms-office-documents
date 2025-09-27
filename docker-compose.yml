@@ -6,12 +6,25 @@ services:
     ports:
       - "8958:8958"
     environment:
-      UPLOAD_STRATEGY: # Your upload strategy, either LOCAL or S3
-      AWS_ACCESS_KEY: Your AWS access key # Required for S3 upload strategy
-      AWS_REGION: Your AWS region, e.g. us-east-1 # Required for S3 upload strategy
-      AWS_SECRET_ACCESS_KEY: Your AWS secret access key # Required for S3 upload strategy
-      S3_BUCKET: Name of your AWS S3 bucket # Required for S3 upload strategy
+      # Upload strategy: LOCAL saves to mounted /app/output; S3 uploads to AWS
+      UPLOAD_STRATEGY: LOCAL
+      # The following AWS variables required only if UPLOAD_STRATEGY=S3
+      AWS_ACCESS_KEY:
+      AWS_REGION:
+      AWS_SECRET_ACCESS_KEY:
+      S3_BUCKET:
     volumes:
-      - <host_path>:/app/output # Directory to save created presentations to, required for LOCAL upload strategy
-      - <host_path>:/app/templates # Directory with custom templates, if used
-      - <host_path>:/app/config # Directory with config.yaml for email styling customization, optional
+      # Local output directory (required for LOCAL strategy)
+      - ./output:/app/output
+      # Custom Office templates (optional: template_4_3.pptx, template_16_9.pptx, template.docx)
+      - ./templates:/app/templates
+      # Config directory containing:
+      #   - config.yaml (optional styling overrides for emails)
+      #   - email_templates.yaml (dynamic email tool definitions – Mustache templates)
+      - ./config:/app/config
+    # Optional: healthcheck could be added later when MCP protocol ping endpoint is exposed
+    # healthcheck:
+    #   test: ["CMD", "curl", "-f", "http://localhost:8958/mcp"]
+    #   interval: 30s
+    #   timeout: 5s
+    #   retries: 3
