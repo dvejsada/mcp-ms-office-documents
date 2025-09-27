@@ -20,15 +20,12 @@ PROD_TEMPLATE_PATH = Path("/app/templates") / TEMPLATE_FILENAME  # external over
 # Built-in template now expected directly in this package directory for simplicity
 INTERNAL_TEMPLATE_PATH = Path(__file__).parent / TEMPLATE_FILENAME
 
-
-
 def _load_template() -> str:
     """Load the email HTML template.
 
     Priority:
       1. External override: /app/templates/general_template.html (e.g., Docker volume mount)
       2. Built-in package template: email_draft/general_template.html (current design)
-      3. Legacy fallback: email_draft/templates/general_template.html (from earlier refactor)
 
     Raises FileNotFoundError if none exist.
     """
@@ -38,9 +35,7 @@ def _load_template() -> str:
     if INTERNAL_TEMPLATE_PATH.exists():
         with open(INTERNAL_TEMPLATE_PATH, "r", encoding="utf-8") as f:
             return f.read()
-    if LEGACY_SUBFOLDER_PATH.exists():  # fallback for backwards compatibility
-        with open(LEGACY_SUBFOLDER_PATH, "r", encoding="utf-8") as f:
-            return f.read()
+
 
     raise FileNotFoundError(
         "Email template not found. Provide '/app/templates/general_template.html' (override) or keep built-in 'email_draft/general_template.html'."
