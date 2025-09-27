@@ -4,8 +4,8 @@ from typing import Annotated, List, Dict, Optional, Literal
 from create_xlsx import markdown_to_excel
 from create_docx import markdown_to_word
 from create_pptx import create_presentation
-from email_draft import create_eml
-from email_draft.mcp_dynamic_email_tools import register_email_template_tools_from_yaml
+from email_tools import create_eml
+from email_tools.dynamic_email_tools import register_email_template_tools_from_yaml
 from pathlib import Path
 
 mcp = FastMCP("MCP Office Documents")

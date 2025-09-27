@@ -25,7 +25,7 @@ def _load_template() -> str:
 
     Priority:
       1. External override: /app/templates/general_template.html (e.g., Docker volume mount)
-      2. Built-in package template: email_draft/general_template.html (current design)
+      2. Built-in package template: email_tools/general_template.html (current design)
 
     Raises FileNotFoundError if none exist.
     """
@@ -38,7 +38,7 @@ def _load_template() -> str:
 
 
     raise FileNotFoundError(
-        "Email template not found. Provide '/app/templates/general_template.html' (override) or keep built-in 'email_draft/general_template.html'."
+        "Email template not found."
     )
 
 
