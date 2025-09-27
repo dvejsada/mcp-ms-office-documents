@@ -18,3 +18,9 @@ templates:
         type: string
         required: false
         description: Optional promotional code
+      - name: tone
+        type: string
+        required: false
+        enum: ["casual", "formal", "friendly"]
+        default: "friendly"
+        description: Tone variant inserted into template (enum, default friendly)

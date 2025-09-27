@@ -4,7 +4,7 @@ from __future__ import annotations
 import io
 from email.message import EmailMessage
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Literal
 
 import yaml
 import pystache
@@ -42,7 +42,7 @@ def register_email_template_tools_from_yaml(mcp: FastMCP, yaml_path: Path) -> No
     try:
         cfg = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
     except Exception as e:  # pragma: no cover
-        print(f"[dynamic-email] Failed to load YAML '{cfg_path}': {e}")
+        print(f"[dynamic-email] Failed to load YAML '{yaml_path}': {e}")
         return
 
     templates = cfg.get("templates") or []
@@ -78,6 +78,26 @@ def register_email_template_tools_from_yaml(mcp: FastMCP, yaml_path: Path) -> No
                 arg_name = arg.get("name")
                 if not arg_name or arg_name in fields:
                     continue  # skip duplicates / base overrides
+
+                enum_values = arg.get("enum")
+                if enum_values and isinstance(enum_values, list) and enum_values:
+                    # Infer literal value types (all ints -> int, all floats -> float, else str)
+                    if all(isinstance(v, int) for v in enum_values):
+                        lit_values = tuple(int(v) for v in enum_values)
+                    elif all(isinstance(v, (int, float)) for v in enum_values):
+                        lit_values = tuple(float(v) for v in enum_values)
+                    else:
+                        lit_values = tuple(str(v) for v in enum_values)
+                    py_type = Literal[lit_values]  # type: ignore[index]
+                    required = bool(arg.get("required", True))
+                    default = arg.get("default", (Ellipsis if required else None))
+                    if default is not Ellipsis and default is not None and default not in lit_values:
+                        print(f"[dynamic-email] Default '{default}' not in enum for {arg_name}; ignoring default.")
+                        default = Ellipsis if required else None
+                    desc = arg.get("description") or f"One of: {', '.join(map(str, lit_values))}"
+                    fields[arg_name] = (py_type, Field(default, description=desc))
+                    continue
+
                 py_type = TYPE_MAP.get(str(arg.get("type", "string")).lower(), str)
                 required = bool(arg.get("required", True))
                 field_type = py_type if required else Optional[py_type]  # type: ignore[index]

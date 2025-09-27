@@ -169,6 +169,42 @@ Mustache offers two syntaxes for inserting values:
 - `{{variable}}` (double braces): Inserts the value with HTML escaping. Use this for normal text (names, emails, links, notes, etc.).
 - `{{{variable}}}` (triple braces): Inserts the value without escaping (raw HTML). Use only for values intended to contain simple HTML markup.
 
+#### Enumerations (enum)
+Add `enum: [value1, value2, ...]` to an argument in `email_templates.yaml` to restrict its accepted values. At runtime the tool will validate the value; invalid options are rejected before rendering. Example from `welcome_email`:
+```yaml
+- name: tone
+  type: string
+  required: false
+  enum: ["casual", "formal", "friendly"]
+  description: Tone variant inserted into template (enum)
+```
+If a `default` is provided it must be one of the listed values; otherwise it is ignored.
+
+#### Defaults (default)
+You can supply a `default:` value for any argument (enum or non‑enum). Notes:
+- If `required: false` and a default is present, the default is used when the caller omits the argument.
+- If `required: true` and you also give a default, the field effectively becomes optional (the default is applied when omitted).
+- For enum arguments the default must be one of the enum values (otherwise it is ignored and the field remains required/optional as specified).
+- Omit `default` entirely if you want the tool to force the caller to provide a value (set `required: true`).
+
+Example with enum default (shown in `welcome_email`):
+```yaml
+- name: tone
+  type: string
+  required: false
+  enum: ["casual", "formal", "friendly"]
+  default: "friendly"
+  description: Tone variant inserted into template
+```
+
+Example non‑enum default:
+```yaml
+- name: footer_note
+  type: string
+  required: false
+  default: "This message is confidential."
+  description: Optional footer line appended at the end
+```
 
 ### Usage Tips
 
@@ -198,6 +234,4 @@ Contributions are welcome! Feel free to submit issues, feature requests, or pull
 - [x] Word documents (docx)
 - [x] Email drafts (eml)
 - [x] Excel spreadsheets (xlsx)
-- [x] Email styling customization via config.yaml
-- [x] Dynamic email template tools (YAML - Mustache only)
-- [ ] Additional template customization options
+- [x] Dynamic email template tools
