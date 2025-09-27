@@ -71,8 +71,9 @@ def register_email_template_tools_from_yaml(mcp: FastMCP, yaml_path: Path) -> No
             if not html_path:
                 print(f"[dynamic-email] Missing html_path for {name}, skipping.")
                 continue
-            if any(sep in html_path for sep in ("/", "\\")):
-                print(f"[dynamic-email] html_path must be filename only (no directories) for {name}; got '{html_path}'")
+            html_path_obj = Path(html_path)
+            if html_path_obj.is_absolute() or len(html_path_obj.parts) != 1:
+                print(f"[dynamic-email] html_path must be filename only (no directories, no absolute paths) for {name}; got '{html_path}'")
                 continue
 
             template_path = templates_dir / html_path
