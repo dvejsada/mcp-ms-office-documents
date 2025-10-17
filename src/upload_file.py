@@ -60,6 +60,24 @@ def generate_unique_object_name(suffix):
 
     return unique_object_name
 
+def get_content_type(file_name):
+    """Determine content type based on file extension.
+
+    :param file_name: Name of the file
+    :return: MIME type string
+    :raises ValueError: If file type is unknown
+    """
+    if "pptx" in file_name:
+        return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    elif "docx" in file_name:
+        return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    elif "xlsx" in file_name:
+        return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    elif "eml" in file_name:
+        return "application/octet-stream"
+    else:
+        raise ValueError("Unknown file type")
+
 def upload_file(file_object, suffix):
     """Upload a file to an S3 bucket, GCS bucket or local folder and return appropriate response.
 
@@ -85,16 +103,7 @@ def upload_to_s3(file_object, file_name):
     s3_client = boto3.client('s3', region_name=AWS_REGION, aws_access_key_id=AWS_ACCESS_KEY,
     aws_secret_access_key=AWS_SECRET_ACCESS_KEY, endpoint_url=f'https://s3.{AWS_REGION}.amazonaws.com')
 
-    if "pptx" in file_name:
-        content_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-    elif "docx" in file_name:
-        content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    elif "xlsx" in file_name:
-        content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    elif "eml" in file_name:
-        content_type = "application/octet-stream"
-    else:
-        raise ValueError("Unknown file type")
+    content_type = get_content_type(file_name)
 
     try:
         # Upload the file to S3
@@ -137,17 +146,7 @@ def upload_to_gcs(file_object, file_name):
     :return: Message with signed URL if successful, else error message
     """
 
-    # Determine content type based on file extension
-    if "pptx" in file_name:
-        content_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-    elif "docx" in file_name:
-        content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    elif "xlsx" in file_name:
-        content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    elif "eml" in file_name:
-        content_type = "application/octet-stream"
-    else:
-        raise ValueError("Unknown file type")
+    content_type = get_content_type(file_name)
 
     try:
         # Create a GCS client with credentials from the environment variable
