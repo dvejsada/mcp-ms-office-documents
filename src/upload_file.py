@@ -172,12 +172,9 @@ def upload_to_gcs(file_object, file_name):
         
         return f"Link to created document to be shared with user in markdown format: {url} . Link is valid for 1 hour."
 
-    except FileNotFoundError:
-        print(f"The file {file_object} was not found.")
-        return None
     except GoogleCloudError as e:
-        print(f"Google Cloud error: {e}")
+        logger.error(f"Google Cloud error: {e}")
         return None
     except Exception as e:
-        print(f"Error uploading to GCS: {e}")
+        logger.error(f"Error uploading to GCS: {e}")
         return None
