@@ -57,6 +57,16 @@ environment:
   S3_BUCKET: your-bucket-name
 ```
 
+**Option C: Google Cloud Storage** - files uploaded to GCS with download URL returned to AI
+```yaml
+environment:
+  UPLOAD_STRATEGY: GCS
+  GCS_BUCKET: your-bucket-name
+  GCS_CREDENTIALS_PATH: /app/config/gcs-credentials.json
+volumes:
+  - ./gcs-credentials.json:/app/config/gcs-credentials.json  # Mount your GCS service account key
+```
+
 ## 🔗 Connect to MCP Clients
 
 ### LibreChat
@@ -223,6 +233,7 @@ For best results when working with AI assistants:
 - Docker and Docker Compose
 - An MCP-compatible client (LibreChat, Claude Desktop, etc.)
 - For S3 upload: AWS account with S3 access
+- For GCS upload: Google Cloud account with Cloud Storage access and service account credentials
 
 ## 🤝 Contributing
 
