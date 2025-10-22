@@ -67,6 +67,31 @@ volumes:
   - ./gcs-credentials.json:/app/config/gcs-credentials.json  # Mount your GCS service account key
 ```
 
+**Option D: Azure Blob Storage** - files uploaded to Azure with SAS download URL returned to AI
+```yaml
+environment:
+  UPLOAD_STRATEGY: AZURE
+  AZURE_STORAGE_ACCOUNT_NAME: your_account_name
+  AZURE_STORAGE_ACCOUNT_KEY: your_account_key
+  AZURE_CONTAINER: your_container_name
+  # Optional custom endpoint (e.g., sovereign clouds)
+  # Defaults to https://<account>.blob.core.windows.net
+  AZURE_BLOB_ENDPOINT: https://<account>.<domain>
+```
+
+### Signed URL / SAS Expiration (TTL)
+
+Control how long download links remain valid by setting `SIGNED_URL_EXPIRES_IN` (seconds). Applies to S3 pre-signed URLs, GCS signed URLs (V4), and Azure SAS tokens.
+
+```yaml
+environment:
+  # Default is 3600 seconds (1 hour)
+  SIGNED_URL_EXPIRES_IN: 3600
+```
+
+- Values must be a positive integer; invalid values fall back to 3600 seconds.
+- LOCAL strategy saves files to `output/` and does not use expiring links.
+
 ## 🔗 Connect to MCP Clients
 
 ### LibreChat
@@ -234,6 +259,7 @@ For best results when working with AI assistants:
 - An MCP-compatible client (LibreChat, Claude Desktop, etc.)
 - For S3 upload: AWS account with S3 access
 - For GCS upload: Google Cloud account with Cloud Storage access and service account credentials
+- For Azure upload: Azure Storage account, container, and account key (or other credential that supports SAS generation)
 
 ## 🤝 Contributing
 
