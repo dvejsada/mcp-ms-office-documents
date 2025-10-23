@@ -50,6 +50,8 @@ The server exposes these MCP tools:
 Dynamic email tools (optional):
 - If `config/email_templates.yaml` exists, each entry is registered as its own email-draft tool at startup. See below for details.
 
+- Short explanation: Dynamic email templates are reusable, parameterized HTML email layouts defined in `config/email_templates.yaml`. At startup the server registers each template as an individual MCP tool and automatically adds standard fields (subject, to, cc, bcc, priority, language). Template-specific arguments (for example `first_name` or `promo_code`) are exposed as tool parameters so AI assistants can call a single, strongly-typed tool to produce consistent, production-ready emails without composing full HTML bodies.
+
 Outputs:
 - LOCAL: files saved to `output/` and reported back
 - S3/GCS/AZURE: a time-limited download link is returned (TTL via `SIGNED_URL_EXPIRES_IN`)
