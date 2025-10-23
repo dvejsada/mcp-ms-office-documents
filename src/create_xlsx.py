@@ -1,9 +1,10 @@
-from os.path import exists
 import re
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
-from pathlib import Path
+import logging
+
+logger = logging.getLogger(__name__)
 
 def load_template():
     """Loads Excel template if available"""
@@ -245,11 +246,11 @@ def detect_formula_pattern(value):
         return f"=AVERAGE({value.split('(')[1]}"
 
     # Simple arithmetic with cell references: A1+B1, A1*B1, etc.
-    if re.match(r'^[A-Z]+\d+[\+\-\*\/][A-Z]+\d+$', value):
+    if re.match(r'^[A-Z]+\d+[+\-*/][A-Z]+\d+$', value):
         return f"={value}"
 
     # Percentage calculation: A1/B1*100
-    if re.match(r'^[A-Z]+\d+\/[A-Z]+\d+\*100$', value):
+    if re.match(r'^[A-Z]+\d+/[A-Z]+\d+\*100$', value):
         return f"={value}/100"  # Convert to decimal for percentage format
 
     return value
@@ -331,15 +332,18 @@ def add_table_to_sheet(table_data, worksheet, start_row, table_positions=None):
 
 def markdown_to_excel(markdown_content):
     """Convert Markdown to Excel workbook (focused on tables and headers)."""
+    logger.info("Starting markdown_to_excel conversion")
     template_path = load_template()
 
     # Create workbook
     if template_path:
         try:
-            wb = load_workbook(template_path)
+            path_str = str(template_path)
+            wb = load_workbook(path_str)
             ws = wb.active
+            logger.debug(f"Using Excel template at: {path_str}")
         except Exception as e:
-            print(f"Warning: Could not load template {template_path}: {e}")
+            logger.warning(f"Could not load Excel template {template_path}: {e}")
             wb = Workbook()
             ws = wb.active
     else:
@@ -351,6 +355,11 @@ def markdown_to_excel(markdown_content):
 
     # Split content into lines
     lines = markdown_content.split('\n')
+
+    # Counters for a short summary
+    headers_count = 0
+    tables_count = 0
+
     current_row = 1
     table_counter = 1
     table_positions = {}  # Track where each table starts
@@ -381,6 +390,9 @@ def markdown_to_excel(markdown_content):
                 else:
                     cell.font = Font(size=12, bold=True)
 
+                headers_count += 1
+                logger.debug(f"Header (level {header_level}): {header_text}")
+
                 current_row += 2  # Add space after headers
                 i += 1
 
@@ -393,7 +405,12 @@ def markdown_to_excel(markdown_content):
                     table_positions[table_key] = current_row
 
                     # Process the table
+                    start_row_before = current_row
                     current_row = add_table_to_sheet(table_data, ws, current_row, table_positions)
+                    row_count = current_row - start_row_before - 2  # subtract header and spacing
+
+                    tables_count += 1
+                    logger.debug(f"Added table #{tables_count} with {len(table_data)} rows")
                     table_counter += 1
 
             # Skip other content
@@ -401,29 +418,22 @@ def markdown_to_excel(markdown_content):
                 i += 1
 
     except Exception as e:
-        print(f"Error in parsing markdown: {e}")
-        import traceback
-        traceback.print_exc()
-        return f"Error in parsing markdown: {e}"
+        logger.error(f"Error generating Excel workbook: {e}", exc_info=True)
+        return f"Error generating Excel workbook: {e}"
 
-    # Save the workbook to BytesIO and upload
+    # Save workbook to BytesIO and upload via existing helper
+    import io
+    file_object = io.BytesIO()
     try:
-        from upload_file import upload_file
-        import io
-
-        # Save to BytesIO object
-        file_object = io.BytesIO()
+        logger.info("Saving Excel workbook to memory buffer")
         wb.save(file_object)
         file_object.seek(0)
-
-        # Upload and get result
+        from upload_file import upload_file
         result = upload_file(file_object, "xlsx")
-        file_object.close()
-
-        print(f"Excel document uploaded successfully")
+        logger.info(f"Excel upload completed (headers={headers_count}, tables={tables_count})")
         return result
     except Exception as e:
-        print(f"Error saving/uploading Excel document: {e}")
-        import traceback
-        traceback.print_exc()
-        return f"Error saving/uploading Excel document: {e}"
+        logger.error(f"Error saving/uploading Excel workbook: {e}", exc_info=True)
+        return f"Error saving/uploading Excel workbook: {e}"
+    finally:
+        file_object.close()

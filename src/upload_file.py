@@ -7,84 +7,38 @@ import os
 import logging
 from datetime import timedelta, datetime, timezone
 
+from config import get_config
+
 logger = logging.getLogger(__name__)
 
-# Load env. variable for upload strategy
-UPLOAD_STRATEGY = os.environ.get("UPLOAD_STRATEGY", "LOCAL").upper()
+# Load centralized configuration
+cfg = get_config()
 
-# Configurable signed URL validity (seconds), default 3600s
-try:
-    SIGNED_URL_EXPIRES_IN = int(os.environ.get("SIGNED_URL_EXPIRES_IN", "3600"))
-    if SIGNED_URL_EXPIRES_IN <= 0:
-        raise ValueError
-except ValueError:
-    logger.warning("Invalid SIGNED_URL_EXPIRES_IN, falling back to 3600 seconds")
-    SIGNED_URL_EXPIRES_IN = 3600
+# Convenience aliases
+UPLOAD_STRATEGY = cfg.storage.strategy
+SIGNED_URL_EXPIRES_IN = cfg.storage.signed_url_expires_in
+OUTPUT_DIR = cfg.storage.output_dir
 
-# Checks value of env. variable
+# Strategy announcement logs
 if UPLOAD_STRATEGY == "LOCAL":
     logger.info("Local upload strategy set.")
-
-# Loads required env. variables for S3 upload strategy
 elif UPLOAD_STRATEGY == "S3":
-    AWS_ACCESS_KEY = os.environ.get("AWS_ACCESS_KEY")
-    AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY")
-    AWS_REGION = os.environ.get('AWS_REGION')
-    S3_BUCKET = os.environ.get("S3_BUCKET")
-    if not AWS_REGION:
-        logger.error("Missing AWS_REGION env. variable")
-    elif not AWS_ACCESS_KEY:
-        logger.error("Missing AWS_ACCESS_KEY env. variable")
-    elif not AWS_SECRET_ACCESS_KEY:
-        logger.error("Missing AWS_SECRET_ACCESS_KEY env. variable")
-    elif not S3_BUCKET:
-        logger.error("Missing S3_BUCKET env. variable")
-    else:
-        logger.info("S3 upload strategy set, all required env. variable provided.")
-
-# Loads required env. variables for GCS upload strategy
+    logger.info("S3 upload strategy set.")
 elif UPLOAD_STRATEGY == "GCS":
-    GCS_BUCKET = os.environ.get("GCS_BUCKET")
-    GCS_CREDENTIALS_PATH = os.environ.get("GCS_CREDENTIALS_PATH")
-    if not GCS_BUCKET:
-        logger.error("Missing GCS_BUCKET env. variable")
-    elif not GCS_CREDENTIALS_PATH:
-        logger.error("Missing GCS_CREDENTIALS_PATH env. variable")
-    else:
-        logger.info("GCS upload strategy set, all required env. variable provided.")
-
-# Loads required env. variables for Azure Blob Storage upload strategy
+    logger.info("GCS upload strategy set.")
 elif UPLOAD_STRATEGY == "AZURE":
-    AZURE_STORAGE_ACCOUNT_NAME = os.environ.get("AZURE_STORAGE_ACCOUNT_NAME")
-    AZURE_STORAGE_ACCOUNT_KEY = os.environ.get("AZURE_STORAGE_ACCOUNT_KEY")
-    AZURE_CONTAINER = os.environ.get("AZURE_CONTAINER")
-    AZURE_BLOB_ENDPOINT = os.environ.get("AZURE_BLOB_ENDPOINT")  # optional, e.g. for sovereign clouds
-    if not AZURE_STORAGE_ACCOUNT_NAME:
-        logger.error("Missing AZURE_STORAGE_ACCOUNT_NAME env. variable")
-    elif not AZURE_STORAGE_ACCOUNT_KEY:
-        logger.error("Missing AZURE_STORAGE_ACCOUNT_KEY env. variable")
-    elif not AZURE_CONTAINER:
-        logger.error("Missing AZURE_CONTAINER env. variable")
-    else:
-        logger.info("Azure Blob upload strategy set, all required env. variable provided.")
-
+    logger.info("Azure Blob upload strategy set.")
 else:
     logger.error("Invalid upload strategy, set either to LOCAL, S3, GCS or AZURE")
 
-def generate_unique_object_name(suffix):
-    """Generate a unique object name using UUID and preserve the file extension.
 
-    :return: Unique object name with the same file extension
-    """
-
-    # Generate a UUID
+def generate_unique_object_name(suffix: str) -> str:
+    """Generate a unique object name using UUID and preserve the file extension."""
     unique_id = str(uuid.uuid4())
-    # Combine UUID and extension
-    unique_object_name = f"{unique_id}.{suffix}"
+    return f"{unique_id}.{suffix}"
 
-    return unique_object_name
 
-def get_content_type(file_name):
+def get_content_type(file_name: str) -> str:
     """Determine content type based on file extension.
 
     :param file_name: Name of the file
@@ -102,8 +56,9 @@ def get_content_type(file_name):
     else:
         raise ValueError("Unknown file type")
 
-def upload_file(file_object, suffix):
-    """Upload a file to an S3 bucket, GCS bucket, Azure Blob Storage, or local folder and return appropriate response.
+
+def upload_file(file_object, suffix: str):
+    """Upload a file to configured backend and return appropriate response.
 
     :param file_object: File-like object to upload
     :param suffix: File extension (e.g., 'pptx', 'docx', 'xlsx', 'eml')
@@ -123,40 +78,51 @@ def upload_file(file_object, suffix):
     else:
         return "No upload strategy set, presentation cannot be created."
 
-def upload_to_s3(file_object, file_name):
+
+def upload_to_s3(file_object, file_name: str):
+    s3cfg = cfg.storage.s3
+    if not s3cfg:
+        logger.error("S3 configuration not provided")
+        return None
 
     # Create an S3 client
-    s3_client = boto3.client('s3', region_name=AWS_REGION, aws_access_key_id=AWS_ACCESS_KEY,
-    aws_secret_access_key=AWS_SECRET_ACCESS_KEY, endpoint_url=f'https://s3.{AWS_REGION}.amazonaws.com')
+    s3_client = boto3.client(
+        's3',
+        region_name=s3cfg.region,
+        aws_access_key_id=s3cfg.access_key,
+        aws_secret_access_key=s3cfg.secret_key,
+        endpoint_url=f'https://s3.{s3cfg.region}.amazonaws.com'
+    )
 
     content_type = get_content_type(file_name)
 
     try:
         # Upload the file to S3
         file_object.seek(0)
-        s3_client.upload_fileobj(Fileobj=file_object, Bucket=S3_BUCKET, Key=file_name, ExtraArgs={'ContentType': content_type})
+        s3_client.upload_fileobj(Fileobj=file_object, Bucket=s3cfg.bucket, Key=file_name, ExtraArgs={'ContentType': content_type})
 
         # Generate a pre-signed URL valid for configured duration
-        url = s3_client.generate_presigned_url('get_object',
-                                               Params={'Bucket': S3_BUCKET,
-                                                       'Key': file_name},
-                                               ExpiresIn=SIGNED_URL_EXPIRES_IN)
+        url = s3_client.generate_presigned_url(
+            'get_object',
+            Params={'Bucket': s3cfg.bucket, 'Key': file_name},
+            ExpiresIn=SIGNED_URL_EXPIRES_IN
+        )
 
         return f"Link to created document to be shared with user in markdown format: {url} . Link is valid for {SIGNED_URL_EXPIRES_IN} seconds."
 
     except FileNotFoundError:
-        print(f"The file {file_object} was not found.")
+        logger.error(f"The file {file_object} was not found.")
         return None
     except NoCredentialsError:
-        print("AWS credentials are not available.")
+        logger.error("AWS credentials are not available.")
         return None
     except ClientError as e:
-        print(f"Client error: {e}")
+        logger.error(f"Client error: {e}")
         return None
 
-def upload_to_local_folder(file_object, file_name):
 
-    save_dir = '/app/output'
+def upload_to_local_folder(file_object, file_name: str):
+    save_dir = OUTPUT_DIR
     os.makedirs(save_dir, exist_ok=True)
     save_path = os.path.join(save_dir, file_name)
 
@@ -166,37 +132,35 @@ def upload_to_local_folder(file_object, file_name):
 
     return f"Inform user that the document {file_name} was saved to his output folder."
 
-def upload_to_gcs(file_object, file_name):
-    """Upload a file to a GCS bucket and return a signed URL valid for configured duration.
 
-    :param file_object: File-like object to upload
-    :param file_name: Name of the file to upload
-    :return: Message with signed URL if successful, else error message
-    """
+def upload_to_gcs(file_object, file_name: str):
+    """Upload a file to a GCS bucket and return a signed URL valid for configured duration."""
+
+    gcscfg = cfg.storage.gcs
+    if not gcscfg:
+        logger.error("GCS configuration not provided")
+        return None
 
     content_type = get_content_type(file_name)
 
     try:
-        # Create a GCS client with credentials from the environment variable
-        storage_client = storage.Client.from_service_account_json(GCS_CREDENTIALS_PATH)
-        
-        # Get the bucket
-        bucket = storage_client.bucket(GCS_BUCKET)
-        
-        # Create a blob (object) in the bucket
+        # Create a GCS client with credentials from the configured path
+        storage_client = storage.Client.from_service_account_json(gcscfg.credentials_path)
+
+        bucket = storage_client.bucket(gcscfg.bucket)
         blob = bucket.blob(file_name)
-        
+
         # Upload the file to GCS
         file_object.seek(0)  # Reset file pointer to beginning
         blob.upload_from_file(file_object, content_type=content_type)
-        
+
         # Generate a signed URL valid for configured duration
         url = blob.generate_signed_url(
             version="v4",
             expiration=timedelta(seconds=SIGNED_URL_EXPIRES_IN),
             method="GET"
         )
-        
+
         return f"Link to created document to be shared with user in markdown format: {url} . Link is valid for {SIGNED_URL_EXPIRES_IN} seconds."
 
     except GoogleCloudError as e:
@@ -206,13 +170,15 @@ def upload_to_gcs(file_object, file_name):
         logger.error(f"Error uploading to GCS: {e}")
         return None
 
-def upload_to_azure(file_object, file_name):
-    """Upload a file to Azure Blob Storage and return a SAS URL valid for configured duration.
 
-    :param file_object: File-like object to upload
-    :param file_name: Name of the file to upload
-    :return: Message with SAS URL if successful, else error message
-    """
+def upload_to_azure(file_object, file_name: str):
+    """Upload a file to Azure Blob Storage and return a SAS URL valid for configured duration."""
+
+    azcfg = cfg.storage.azure
+    if not azcfg:
+        logger.error("Azure configuration not provided")
+        return None
+
     try:
         # Import here to avoid requiring azure-storage-blob unless AZURE strategy is used
         from azure.storage.blob import (
@@ -227,10 +193,10 @@ def upload_to_azure(file_object, file_name):
 
     content_type = get_content_type(file_name)
 
-    account_name = os.environ.get("AZURE_STORAGE_ACCOUNT_NAME")
-    account_key = os.environ.get("AZURE_STORAGE_ACCOUNT_KEY")
-    container_name = os.environ.get("AZURE_CONTAINER")
-    endpoint = os.environ.get("AZURE_BLOB_ENDPOINT") or f"https://{account_name}.blob.core.windows.net"
+    account_name = azcfg.account_name
+    account_key = azcfg.account_key
+    container_name = azcfg.container
+    endpoint = azcfg.endpoint or f"https://{account_name}.blob.core.windows.net"
 
     try:
         # Create a BlobServiceClient

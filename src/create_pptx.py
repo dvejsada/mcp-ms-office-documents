@@ -34,6 +34,7 @@ def load_templates():
     # Check for custom templates first
     for template_4_3, template_16_9 in custom_template_paths:
         if template_4_3.exists() and template_16_9.exists():
+            logger.debug(f"Found custom PPT templates: 4:3={template_4_3}, 16:9={template_16_9}")
             return str(template_4_3), str(template_16_9)
 
     # Fallback to built-in templates in src folder
@@ -41,6 +42,7 @@ def load_templates():
     fallback_16_9 = Path(__file__).parent / "template_general_16_9.pptx"
 
     if fallback_4_3.exists() and fallback_16_9.exists():
+        logger.debug(f"Using fallback PPT templates: 4:3={fallback_4_3}, 16:9={fallback_16_9}")
         return str(fallback_4_3), str(fallback_16_9)
     else:
         logger.warning("Template files not found, will use default PowerPoint templates")
@@ -52,12 +54,14 @@ class PowerpointPresentation:
     def __init__(self, slides: List[Dict[str, Any]], format: str):
         """Initialize PowerPoint presentation with slides and format"""
 
+        logger.info(f"Initializing PowerPoint: slides={len(slides)}, format={format}")
         # Validate input
         if not slides:
             raise ValueError("At least one slide is required")
 
         # Loads templates
         self.template_regular, self.template_wide = load_templates()
+        logger.debug(f"Selected templates -> 4:3={self.template_regular}, 16:9={self.template_wide}")
 
         # Create presentation based on the format used
         try:
@@ -84,6 +88,7 @@ class PowerpointPresentation:
 
         # Remove default slide if it exists
         if len(self.presentation.slides) > 0:
+            logger.debug("Removing default first slide from new presentation")
             slide_to_remove = self.presentation.slides[0]
             rId = self.presentation.slides.element.remove(slide_to_remove.element)
 
@@ -92,9 +97,11 @@ class PowerpointPresentation:
 
     def _create_slides(self, slides: List[Dict[str, Any]]):
         """Create all slides from the slides data"""
+        logger.info(f"Creating {len(slides)} slides")
         for i, slide in enumerate(slides):
             try:
                 slide_type = slide.get("slide_type")
+                logger.debug(f"Creating slide index={i}, type={slide_type}, title={slide.get('slide_title','')}")
 
                 if slide_type == "content":
                     self.create_content_slide(slide)
@@ -114,6 +121,7 @@ class PowerpointPresentation:
         try:
             title_layout = self.presentation.slide_layouts[TITLE_LAYOUT]
             title_slide = self.presentation.slides.add_slide(title_layout)
+            logger.debug("Added title slide")
 
             # Set title
             if len(title_slide.placeholders) > 0:
@@ -132,6 +140,7 @@ class PowerpointPresentation:
         try:
             section_layout = self.presentation.slide_layouts[SECTION_LAYOUT]
             section_slide = self.presentation.slides.add_slide(section_layout)
+            logger.debug("Added section slide")
 
             # Set title
             if len(section_slide.placeholders) > 0:
@@ -146,6 +155,7 @@ class PowerpointPresentation:
         try:
             content_layout = self.presentation.slide_layouts[CONTENT_LAYOUT]
             content_slide = self.presentation.slides.add_slide(content_layout)
+            logger.debug("Added content slide")
 
             # Set title
             if len(content_slide.placeholders) > 0:
@@ -177,6 +187,7 @@ class PowerpointPresentation:
     def save(self) -> io.BytesIO:
         """Save presentation to BytesIO object"""
         try:
+            logger.info("Saving PowerPoint to memory buffer")
             file_like_object = io.BytesIO()
             self.presentation.save(file_like_object)
             file_like_object.seek(0)
@@ -193,6 +204,8 @@ def create_presentation(slides: List[Dict[str, Any]], format: str = "4:3") -> st
         if not slides:
             raise ValueError("No slides provided")
 
+        logger.info(f"Starting create_presentation: slides={len(slides)}, format={format}")
+
         # Create presentation
         presentation = PowerpointPresentation(slides, format)
 
@@ -203,6 +216,7 @@ def create_presentation(slides: List[Dict[str, Any]], format: str = "4:3") -> st
         text = upload_file(file_object, "pptx")
         file_object.close()
 
+        logger.info("PowerPoint upload completed")
         # Return presentation link
         return text
 
