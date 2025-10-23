@@ -24,8 +24,6 @@ elif UPLOAD_STRATEGY == "GCS":
     logger.info("GCS upload strategy set.")
 elif UPLOAD_STRATEGY == "AZURE":
     logger.info("Azure Blob upload strategy set.")
-else:
-    logger.error("Invalid upload strategy, set either to LOCAL, S3, GCS or AZURE")
 
 
 def upload_file(file_object, suffix: str):
