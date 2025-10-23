@@ -14,7 +14,6 @@ cfg = get_config()
 # Convenience aliases
 UPLOAD_STRATEGY = cfg.storage.strategy
 SIGNED_URL_EXPIRES_IN = cfg.storage.signed_url_expires_in
-OUTPUT_DIR = cfg.storage.output_dir
 
 # Strategy announcement logs
 if UPLOAD_STRATEGY == "LOCAL":
@@ -40,7 +39,7 @@ def upload_file(file_object, suffix: str):
     object_name = generate_unique_object_name(suffix)
 
     if UPLOAD_STRATEGY == "LOCAL":
-        return upload_to_local_folder(file_object, object_name, OUTPUT_DIR)
+        return upload_to_local_folder(file_object, object_name)
     elif UPLOAD_STRATEGY == "S3":
         return upload_to_s3(file_object, object_name, cfg.storage.s3, SIGNED_URL_EXPIRES_IN)
     elif UPLOAD_STRATEGY == "GCS":

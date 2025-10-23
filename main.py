@@ -1,9 +1,9 @@
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 from typing import Annotated, List, Dict, Optional, Literal
-from create_xlsx import markdown_to_excel
+from xlsx_tools import markdown_to_excel
 from docx_tools import markdown_to_word
-from create_pptx import create_presentation
+from pptx_tools import create_presentation
 from email_tools import create_eml
 from email_tools.dynamic_email_tools import register_email_template_tools_from_yaml
 from pathlib import Path
@@ -16,13 +16,29 @@ mcp = FastMCP("MCP Office Documents")
 config = get_config()
 logger = logging.getLogger(__name__)
 
-# Dynamic email tools: ONLY load from config/email_templates.yaml
-_config_dir = Path(__file__).resolve().parent.parent / "config"
-_primary_yaml = _config_dir / "email_templates.yaml"
-if _primary_yaml.exists():
-    register_email_template_tools_from_yaml(mcp, _primary_yaml)
+# Look for dynamic email templates in production and local locations.
+# Production (container): /app/config/email_templates.yaml
+# Local development: <project_root>/config/email_templates.yaml
+APP_CONFIG_PATH = Path("/app/config") / "email_templates.yaml"
+LOCAL_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "email_templates.yaml"
+
+# Prefer the production path when present, otherwise fall back to local config.
+_primary_yaml = None
+for candidate in (APP_CONFIG_PATH, LOCAL_CONFIG_PATH):
+    if candidate.exists():
+        _primary_yaml = candidate
+        logger.info("[dynamic-email] Found email templates file: %s", candidate)
+        break
+
+if _primary_yaml:
+    try:
+        register_email_template_tools_from_yaml(mcp, _primary_yaml)
+    except Exception as e:
+        logger.exception("[dynamic-email] Failed to register email templates from %s: %s", _primary_yaml, e)
 else:
-    logger.info("[dynamic-email] No dynamic email templates file found at config/email_templates.yaml - skipping")
+    logger.info(
+        "[dynamic-email] No dynamic email templates file found at /app/config/email_templates.yaml or config/email_templates.yaml - skipping"
+    )
 
 class PowerPointSlide(BaseModel):
     """PowerPoint slide - can be title, section, or content slide based on slide_type."""

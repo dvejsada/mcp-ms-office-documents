@@ -11,7 +11,7 @@ Highlights:
 
 Environment variables (see .env.example for full list):
 - Logging: LOG_LEVEL (INFO/DEBUG), DEBUG (fallback to DEBUG)
-- Storage generic: UPLOAD_STRATEGY, SIGNED_URL_EXPIRES_IN, OUTPUT_DIR
+- Storage generic: UPLOAD_STRATEGY, SIGNED_URL_EXPIRES_IN
 - Strategy specific: AWS_*, GCS_*, AZURE_*
 """
 
@@ -131,10 +131,13 @@ class StorageStrategy(str, Enum):
 
 
 class StorageSettings(BaseModel):
-    """Generic storage configuration plus strategy-specific nested settings."""
+    """Generic storage configuration plus strategy-specific nested settings.
+
+    Note: The LOCAL strategy always writes to the working folder ./app/upload;
+    there is no configurable output directory for LOCAL.
+    """
     strategy: StorageStrategy = Field(default=StorageStrategy.LOCAL)
     signed_url_expires_in: int = Field(default=3600, gt=0, description="TTL for S3/GCS/Azure download links in seconds")
-    output_dir: str = Field(default="/app/output", description="Directory used by LOCAL strategy inside container")
 
     # Optional nested settings depending on strategy
     s3: Optional[S3Settings] = None
@@ -181,7 +184,7 @@ class Config(BaseModel):
         logging_settings = LoggingSettings(level=LogLevel(level))
 
         # Storage
-        raw_strategy = (os.environ.get("UPLOAD_STRATEGY", "LOCAL").upper())
+        raw_strategy = (os.environ.get("UPLOAD_STRATEGY", "LOCAL")).upper()
         strategy = raw_strategy if raw_strategy in {e.value for e in StorageStrategy} else "LOCAL"
 
         # Signed URL expiry (fallback to 3600 on invalid input)
@@ -191,8 +194,6 @@ class Config(BaseModel):
                 raise ValueError
         except ValueError:
             expires_in = 3600
-
-        output_dir = os.environ.get("OUTPUT_DIR", "/app/output")
 
         # Strategy-specific settings (only populate the relevant one)
         s3_settings = None
@@ -222,7 +223,6 @@ class Config(BaseModel):
         storage_settings = StorageSettings(
             strategy=StorageStrategy(strategy),
             signed_url_expires_in=expires_in,
-            output_dir=output_dir,
             s3=s3_settings,
             gcs=gcs_settings,
             azure=azure_settings,
