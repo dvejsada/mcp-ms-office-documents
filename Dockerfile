@@ -40,7 +40,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 RUN mkdir -p output custom_templates config
 
 # Copy the source code into the container.
-COPY src/ src/
+COPY . .
 
 # Change ownership of directories to appuser
 RUN chown -R appuser:appuser /app/output /app/custom_templates /app/config

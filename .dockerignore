@@ -44,6 +44,7 @@ env.bak/
 venv.bak/
 .venv/
 .env
+.env.example
 
 # =============================================================================
 # TESTING AND COVERAGE
