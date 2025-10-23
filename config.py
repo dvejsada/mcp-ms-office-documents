@@ -10,7 +10,7 @@ Highlights:
 - Exposes get_config() to retrieve a singleton Config across the app.
 
 Environment variables (see .env.example for full list):
-- Logging: LOG_LEVEL (INFO/DEBUG), DEBUG (fallback to DEBUG)
+- Logging: DEBUG (true/false)
 - Storage generic: UPLOAD_STRATEGY, SIGNED_URL_EXPIRES_IN
 - Strategy specific: AWS_*, GCS_*, AZURE_*
 """
@@ -31,27 +31,26 @@ class LogLevel(str, Enum):
 
 
 class LoggingSettings(BaseModel):
-    """Logging configuration settings.
+    """Logging configuration simplified to a single DEBUG flag.
 
-    Level selection precedence:
-    - If LOG_LEVEL is set (INFO/DEBUG), use it.
-    - Else if DEBUG is truthy (1/true/on), use DEBUG.
-    - Else default to INFO.
+    Behavior:
+    - If DEBUG env var is truthy (1/true/on), logging is DEBUG.
+    - Otherwise logging is INFO.
+
+    Exposes convenience properties used across the app:
+    - level_no: numeric logging level
+    - mcp_level_str: lower-case string for FastMCP's `log_level` argument
     """
-    level: LogLevel = Field(default=LogLevel.INFO)
+    debug: bool = Field(default=False, description="True to enable DEBUG level, False for INFO")
 
     @property
     def level_no(self) -> int:
-        mapping = {
-            LogLevel.DEBUG: logging.DEBUG,
-            LogLevel.INFO: logging.INFO,
-        }
-        return mapping.get(self.level, logging.INFO)
+        return logging.DEBUG if self.debug else logging.INFO
 
     @property
     def mcp_level_str(self) -> str:
         """Return lower-case string for FastMCP `log_level` argument."""
-        return self.level.value.lower()
+        return "debug" if self.debug else "info"
 
 
 class S3Settings(BaseModel):
@@ -177,11 +176,9 @@ class Config(BaseModel):
 
         This does not configure logging by itself; see configure_logging().
         """
-        # Logging
+        # Logging: only use DEBUG env var (truthy -> DEBUG, falsy -> INFO)
         debug = cls._parse_bool(os.environ.get("DEBUG"))
-        raw_level = (os.environ.get("LOG_LEVEL") or ("DEBUG" if debug else "INFO")).upper()
-        level = raw_level if raw_level in {e.value for e in LogLevel} else "INFO"
-        logging_settings = LoggingSettings(level=LogLevel(level))
+        logging_settings = LoggingSettings(debug=debug)
 
         # Storage
         raw_strategy = (os.environ.get("UPLOAD_STRATEGY", "LOCAL")).upper()
@@ -254,7 +251,8 @@ def configure_logging(config: Config) -> None:
     root = logging.getLogger()
     if not root.handlers:
         handler = logging.StreamHandler()
-        if config.logging.level == LogLevel.DEBUG:
+        # Use the debug flag (simplified API)
+        if config.logging.debug:
             fmt = "%(asctime)s | %(levelname)s | %(name)s:%(lineno)d | %(message)s"
         else:
             fmt = "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
