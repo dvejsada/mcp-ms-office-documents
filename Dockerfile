@@ -52,4 +52,4 @@ USER appuser
 EXPOSE 8958
 
 # Run the application.
-CMD python /app/src/main.py
+CMD python /app/main.py
