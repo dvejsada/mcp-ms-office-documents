@@ -5,33 +5,17 @@ services:
     restart: always
     ports:
       - "8958:8958"
-    environment:
-      # Upload strategy: LOCAL saves to mounted /app/output; S3 uploads to AWS; GCS uploads to Google Cloud Storage; AZURE uploads to Azure Blob Storage
-      UPLOAD_STRATEGY: LOCAL
-      # Optional: signed URL validity in seconds for S3/GCS/AZURE (default 3600)
-      SIGNED_URL_EXPIRES_IN: 3600
-      # The following AWS variables required only if UPLOAD_STRATEGY=S3
-      AWS_ACCESS_KEY:
-      AWS_REGION:
-      AWS_SECRET_ACCESS_KEY:
-      S3_BUCKET:
-      # The following GCS variables required only if UPLOAD_STRATEGY=GCS
-      GCS_BUCKET:
-      GCS_CREDENTIALS_PATH: /app/config/gcs-credentials.json
-      # The following AZURE variables required only if UPLOAD_STRATEGY=AZURE
-      AZURE_STORAGE_ACCOUNT_NAME:
-      AZURE_STORAGE_ACCOUNT_KEY:
-      AZURE_CONTAINER:
-      # Optional custom endpoint (e.g., sovereign clouds); defaults to https://<account>.blob.core.windows.net
-      AZURE_BLOB_ENDPOINT:
+    # Load configuration from .env (copy .env.example to .env and edit)
+    env_file:
+      - .env
     volumes:
-      # Local output directory (required for LOCAL strategy)
+      # Local output directory (used by LOCAL strategy)
       - ./output:/app/output
-      # Custom Office templates (optional: template_4_3.pptx, template_16_9.pptx, template.docx)
-      - ./templates:/app/templates
+      # Custom Office templates (optional): custom_pptx_template_4_3.pptx, custom_pptx_template_16_9.pptx, custom_docx_template.docx, custom_email_template.html
+      - ./custom_templates:/app/custom_templates
       # Config directory containing:
-      #   - config.yaml (optional styling overrides for emails)
       #   - email_templates.yaml (dynamic email tool definitions – Mustache templates)
+      #   - credentials or other configuration files (e.g., GCS service account JSON)
       - ./config:/app/config
     # Optional: healthcheck could be added later when MCP protocol ping endpoint is exposed
     # healthcheck:

@@ -44,7 +44,7 @@ Thumbs.db
 
 # Output directory
 output/
-templates/
+custom_templates/
 config/
 
 # Temporary files

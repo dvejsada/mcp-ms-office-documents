@@ -2,7 +2,7 @@
 # USER DATA AND RUNTIME DIRECTORIES
 # =============================================================================
 # Exclude user-uploaded templates and generated output files
-templates/
+custom_templates/
 output/
 config/
 

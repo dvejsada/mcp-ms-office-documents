@@ -1,43 +1,26 @@
-from os.path import exists
+import logging
 import re
-from docx import Document
+
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.opc.constants import RELATIONSHIP_TYPE
-from upload_file import upload_file
-from pathlib import Path
-import io
+from template_utils import find_docx_template
+
+logger = logging.getLogger(__name__)
+
 
 def load_templates():
-    """Loads presentation templates"""
-    # Get the current working directory
-    current_dir = Path.cwd()
-    
-    # Try multiple potential template locations for custom templates first
-    custom_template_paths = [
-        # Production: if working directory is 'app', templates should be in app/templates
-        current_dir / "templates" / "template.docx",
-        # Development: if running from src folder, go up one level to find templates
-        current_dir.parent / "templates" / "template.docx",
-        # Fallback: relative to this script's location
-        Path(__file__).parent.parent / "templates" / "template.docx"
-    ]
-    
-    # Check for custom templates first
-    for template_path in custom_template_paths:
-        if template_path.exists():
-            print(template_path)
-            return str(template_path)
-    
-    # Fallback to built-in template in src folder
-    fallback_template = Path(__file__).parent / "template.docx"
-    if fallback_template.exists():
-        print(fallback_template)
-        return str(fallback_template)
+    """Resolve Word template path from custom/default template directories.
 
-    # If no template found, return None
-    print("No template found, will create a blank document")
-    return None
+    Returns absolute path as string or None if not found.
+    """
+    path = find_docx_template()
+    if path:
+        logger.debug(f"Using Word template: {path}")
+    else:
+        logger.warning("No Word template found, will create a blank document")
+    return path
+
 
 def add_hyperlink(paragraph, text, url, color="0000FF", underline=True):
     """Adds a hyperlink to a paragraph"""
@@ -66,6 +49,7 @@ def add_hyperlink(paragraph, text, url, color="0000FF", underline=True):
 
     paragraph._p.append(hyperlink)
 
+
 def parse_inline_formatting(text, paragraph):
     """Parse inline markdown formatting like **bold**, *italic*, and [links](url)"""
     # First handle escape characters
@@ -80,7 +64,7 @@ def parse_inline_formatting(text, paragraph):
             continue
 
         # Split text by formatting markers while preserving the markers
-        parts = re.split(r'(\*\*.*?\*\*|\*.*?\*|`.*?`|\[.*?\]\(.*?\))', line_part)
+        parts = re.split(r'(\*\*.*?\*\*|\*.*?\*|`.*?`|\[.*?]\(.*?\))', line_part)
 
         for part in parts:
             if not part:
@@ -101,7 +85,7 @@ def parse_inline_formatting(text, paragraph):
                 run.font.name = 'Courier New'
             # Links [text](url)
             elif part.startswith('[') and '](' in part and part.endswith(')'):
-                link_match = re.match(r'\[(.*?)\]\((.*?)\)', part)
+                link_match = re.match(r'\[(.*?)]\((.*?)\)', part)
                 if link_match:
                     link_text, url = link_match.groups()
                     add_hyperlink(paragraph, link_text, url)
@@ -112,6 +96,7 @@ def parse_inline_formatting(text, paragraph):
         # Add line break if this isn't the last part
         if line_idx < len(line_parts) - 1:
             paragraph.add_run().add_break()
+
 
 def handle_escapes(text):
     """Handle backslash escaped characters"""
@@ -135,6 +120,7 @@ def handle_escapes(text):
         text = text.replace(placeholder, char)
 
     return text
+
 
 def parse_table(lines, start_idx):
     """Parse markdown table and return the table data and next line index"""
@@ -166,6 +152,7 @@ def parse_table(lines, start_idx):
 
     return table_data, i
 
+
 def add_table_to_doc(table_data, doc):
     """Add table data to Word document"""
     if not table_data:
@@ -187,158 +174,6 @@ def add_table_to_doc(table_data, doc):
                 cell_paragraph = cell.paragraphs[0]
                 parse_inline_formatting(cell_text, cell_paragraph)
 
-def markdown_to_word(markdown_content):
-    """Convert Markdown to Word document."""
-    path = load_templates()
-
-    # Create document with or without template
-    if path:
-        doc = Document(path)
-    else:
-        doc = Document()  # Create blank document if no template
-        print("Warning: No template found, creating blank document")
-
-    # Split content into lines, but preserve line breaks within paragraphs
-    lines = markdown_content.split('\n')
-    i = 0
-
-    try:
-        while i < len(lines):
-            line = lines[i]
-
-            # Handle multiple empty lines (preserve spacing)
-            if not line.strip():
-                empty_line_count = 0
-                start_empty = i
-
-                # Count consecutive empty lines
-                while i < len(lines) and not lines[i].strip():
-                    empty_line_count += 1
-                    i += 1
-
-                # Add appropriate spacing based on number of empty lines
-                if empty_line_count == 1:
-                    # Single empty line = normal paragraph break (already handled by next iteration)
-                    pass
-                elif empty_line_count >= 2:
-                    # Multiple empty lines = add extra spacing
-                    # Add one empty paragraph for each additional empty line beyond the first
-                    for _ in range(empty_line_count - 1):
-                        doc.add_paragraph()
-
-                continue
-
-            # Check if this line ends with two spaces (line break)
-            if line.endswith('  '):
-                # Collect lines that are part of the same paragraph (connected by line breaks)
-                paragraph_lines = []
-                while i < len(lines):
-                    current_line = lines[i]
-                    if not current_line.strip():  # Empty line ends the paragraph
-                        break
-
-                    paragraph_lines.append(current_line)
-                    i += 1
-
-                    # If line doesn't end with two spaces, this paragraph is complete
-                    if not current_line.endswith('  '):
-                        break
-
-                # Join lines with line break markers
-                full_text = '  \n'.join(paragraph_lines)
-
-                # Determine what type of content this is
-                first_line = paragraph_lines[0].strip()
-
-                # Headers
-                if first_line.startswith('#'):
-                    header_level = len(first_line) - len(first_line.lstrip('#'))
-                    header_text = first_line.lstrip('#').strip()
-                    heading = doc.add_heading('', level=min(header_level, 6))
-                    parse_inline_formatting(header_text, heading)
-
-                # Block quotes
-                elif first_line.startswith('>'):
-                    quote_text = full_text[1:].strip()  # Remove > from beginning
-                    quote_paragraph = doc.add_paragraph()
-                    quote_paragraph.style = 'Quote'
-                    parse_inline_formatting(quote_text, quote_paragraph)
-
-                # Regular paragraph with line breaks
-                else:
-                    paragraph = doc.add_paragraph()
-                    parse_inline_formatting(full_text, paragraph)
-
-                continue
-
-            line = line.strip()
-
-            # Headers
-            if line.startswith('#'):
-                header_level = len(line) - len(line.lstrip('#'))
-                header_text = line.lstrip('#').strip()
-                heading = doc.add_heading('', level=min(header_level, 6))
-                parse_inline_formatting(header_text, heading)
-                i += 1
-
-            # Tables
-            elif line.startswith('|'):
-                table_data, i = parse_table(lines, i)
-                if table_data:
-                    add_table_to_doc(table_data, doc)
-
-            # Ordered lists
-            elif re.match(r'^\d+\.\s+', line):
-                i = process_list_items(lines, i, doc, True, 0)
-
-            # Unordered lists
-            elif re.match(r'^[-*+]\s+', line):
-                i = process_list_items(lines, i, doc, False, 0)
-
-            # Horizontal rule
-            elif line.startswith('---') or line.startswith('***'):
-                # Add a horizontal line (simplified as empty paragraph with border)
-                paragraph = doc.add_paragraph()
-                i += 1
-
-            # Block quotes (useful for legal citations)
-            elif line.startswith('>'):
-                quote_text = line[1:].strip()
-                quote_paragraph = doc.add_paragraph()
-                quote_paragraph.style = 'Quote'
-                parse_inline_formatting(quote_text, quote_paragraph)
-                i += 1
-
-            # Regular paragraphs
-            else:
-                paragraph = doc.add_paragraph()
-                parse_inline_formatting(line, paragraph)
-                i += 1
-
-    except Exception as e:
-        print(f"Error in parsing markdown: {e}")
-        import traceback
-        traceback.print_exc()
-        return f"Error in parsing markdown: {e}"
-
-    # Save the document to BytesIO and upload
-    try:
-        # Save to BytesIO object
-        file_object = io.BytesIO()
-        doc.save(file_object)
-        file_object.seek(0)
-
-        # Upload and get result
-        result = upload_file(file_object, "docx")
-        file_object.close()
-
-        print(f"Word document uploaded successfully")
-        return result
-    except Exception as e:
-        print(f"Error saving/uploading Word document: {e}")
-        import traceback
-        traceback.print_exc()
-        return f"Error saving/uploading Word document: {e}"
 
 def process_list_items(lines, start_idx, doc, is_ordered=False, level=0):
     """Process markdown list items with proper Word numbering"""

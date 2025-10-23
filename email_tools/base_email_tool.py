@@ -1,45 +1,33 @@
 import io
-from pathlib import Path
 from email.mime.text import MIMEText  # fixed module path
 from email.utils import formatdate
 from email.header import Header
 import pystache
 import html
+import logging
 
-# Robust import for upload_file regardless of sys.path setup
-try:
-    from upload_file import upload_file  # type: ignore
-except ImportError:  # pragma: no cover
-    import os, sys
-    sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-    from upload_file import upload_file  # type: ignore
+from upload_tools import upload_file
+from template_utils import find_email_template
 
-# Template file name
-TEMPLATE_FILENAME = "general_template.html"
-PROD_TEMPLATE_PATH = Path("/app/templates") / TEMPLATE_FILENAME  # external override (production / mounted)
-# Built-in template now expected directly in this package directory for simplicity
-INTERNAL_TEMPLATE_PATH = Path(__file__).parent / TEMPLATE_FILENAME
+logger = logging.getLogger(__name__)
+
 
 def _load_template() -> str:
-    """Load the email HTML template.
+    """Load the email HTML template from custom/default template directories.
 
     Priority:
-      1. External override: /app/templates/general_template.html (e.g., Docker volume mount)
-      2. Built-in package template: email_tools/general_template.html (current design)
+      1. custom_email_template.html (or /app/custom_templates in production)
+      2. default_email_template.html (or /app/default_templates in production)
 
     Raises FileNotFoundError if none exist.
     """
-    if PROD_TEMPLATE_PATH.exists():
-        with open(PROD_TEMPLATE_PATH, "r", encoding="utf-8") as f:
-            return f.read()
-    if INTERNAL_TEMPLATE_PATH.exists():
-        with open(INTERNAL_TEMPLATE_PATH, "r", encoding="utf-8") as f:
-            return f.read()
-
-
-    raise FileNotFoundError(
-        "Email template not found."
-    )
+    path = find_email_template()
+    if not path:
+        raise FileNotFoundError(
+            "Email template not found: tried custom_email_template.html and default_email_template.html"
+        )
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read()
 
 
 def create_eml(to=None, cc=None, bcc=None, re=None, content=None, priority="normal", language="cs-CZ"):

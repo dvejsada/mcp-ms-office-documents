@@ -1,22 +1,44 @@
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 from typing import Annotated, List, Dict, Optional, Literal
-from create_xlsx import markdown_to_excel
-from create_docx import markdown_to_word
-from create_pptx import create_presentation
+from xlsx_tools import markdown_to_excel
+from docx_tools import markdown_to_word
+from pptx_tools import create_presentation
 from email_tools import create_eml
 from email_tools.dynamic_email_tools import register_email_template_tools_from_yaml
 from pathlib import Path
+import logging
+from config import get_config
 
 mcp = FastMCP("MCP Office Documents")
 
-# Dynamic email tools: ONLY load from config/email_templates.yaml (legacy root file support removed)
-_config_dir = Path(__file__).resolve().parent.parent / "config"
-_primary_yaml = _config_dir / "email_templates.yaml"
-if _primary_yaml.exists():
-    register_email_template_tools_from_yaml(mcp, _primary_yaml)
+# Initialize config and logging
+config = get_config()
+logger = logging.getLogger(__name__)
+
+# Look for dynamic email templates in production and local locations.
+# Production (container): /app/config/email_templates.yaml
+# Local development: <project_root>/config/email_templates.yaml
+APP_CONFIG_PATH = Path("/app/config") / "email_templates.yaml"
+LOCAL_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "email_templates.yaml"
+
+# Prefer the production path when present, otherwise fall back to local config.
+_primary_yaml = None
+for candidate in (APP_CONFIG_PATH, LOCAL_CONFIG_PATH):
+    if candidate.exists():
+        _primary_yaml = candidate
+        logger.info("[dynamic-email] Found email templates file: %s", candidate)
+        break
+
+if _primary_yaml:
+    try:
+        register_email_template_tools_from_yaml(mcp, _primary_yaml)
+    except Exception as e:
+        logger.exception("[dynamic-email] Failed to register email templates from %s: %s", _primary_yaml, e)
 else:
-    print("[dynamic-email] No dynamic email templates file found at config/email_templates.yaml - skipping")
+    logger.info(
+        "[dynamic-email] No dynamic email templates file found at /app/config/email_templates.yaml or config/email_templates.yaml - skipping"
+    )
 
 class PowerPointSlide(BaseModel):
     """PowerPoint slide - can be title, section, or content slide based on slide_type."""
@@ -43,14 +65,14 @@ async def create_excel_document(
     Converts markdown to Excel with advanced formula support.
     """
 
-    print(f"Converting markdown to Excel document")
+    logger.info("Converting markdown to Excel document")
 
     try:
         result = markdown_to_excel(markdown_content)
-        print(f"Excel document uploaded successfully")
+        logger.info("Excel document uploaded successfully")
         return result
     except Exception as e:
-        print(f"Error creating Excel document: {e}")
+        logger.error(f"Error creating Excel document: {e}")
         return f"Error creating Excel document: {str(e)}"
 
 @mcp.tool(
@@ -67,14 +89,14 @@ async def create_word_document(
 
     """
 
-    print(f"Converting markdown to Word document")
+    logger.info("Converting markdown to Word document")
 
     try:
         result = markdown_to_word(markdown_content)
-        print(f"Word document uploaded successfully")
+        logger.info("Word document uploaded successfully")
         return result
     except Exception as e:
-        print(f"Error creating Word document: {e}")
+        logger.error(f"Error creating Word document: {e}")
         return f"Error creating Word document: {str(e)}"
 
 @mcp.tool(
@@ -92,15 +114,15 @@ async def create_powerpoint_presentation(
 ) -> str:
     """Creates PowerPoint presentations with structured slide models and professional templates."""
 
-    print(f"Creating PowerPoint presentation with {len(slides)} slides in {format} format")
+    logger.info(f"Creating PowerPoint presentation with {len(slides)} slides in {format} format")
 
     try:
         slides_data = [slide.model_dump() for slide in slides]
         result = create_presentation(slides_data, format)
-        print(f"PowerPoint presentation created: {result}")
+        logger.info(f"PowerPoint presentation created: {result}")
         return result
     except Exception as e:
-        print(f"Error creating PowerPoint presentation: {e}")
+        logger.error(f"Error creating PowerPoint presentation: {e}")
         return f"Error creating PowerPoint presentation: {str(e)}"
 
 @mcp.tool(
@@ -122,7 +144,7 @@ async def create_email_draft(
     Creates professional email drafts in EML format with preset styling and language settings.
     """
 
-    print(f"Creating email draft with subject: {subject}")
+    logger.info(f"Creating email draft with subject: {subject}")
 
     try:
         result = create_eml(
@@ -134,10 +156,10 @@ async def create_email_draft(
             priority=priority,
             language=language
         )
-        print(f"Email draft created: {result}")
+        logger.info(f"Email draft created: {result}")
         return result
     except Exception as e:
-        print(f"Error creating email draft: {e}")
+        logger.error(f"Error creating email draft: {e}")
         return f"Error creating email draft: {str(e)}"
 
 if __name__ == "__main__":
@@ -145,6 +167,6 @@ if __name__ == "__main__":
         transport="streamable-http",
         host="0.0.0.0",
         port=8958,
-        log_level="info",
+        log_level=config.logging.mcp_level_str,
         path="/mcp"
     )
