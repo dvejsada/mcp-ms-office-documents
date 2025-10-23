@@ -7,7 +7,7 @@ This server lets AI assistants generate professional PowerPoint, Word, Excel, an
 - Requirements: Docker and Docker Compose
 - Prepare folders (create if missing):
   - `output/` – where files are saved for LOCAL strategy
-  - `templates/` – optional custom Office/email templates
+  - `custom_templates/` – optional custom Office/email templates
   - `config/` – configuration (e.g., `email_templates.yaml`, credentials)
 - Get docker-compose.yml (copy or download into this folder):
 ```cmd
@@ -25,10 +25,7 @@ curl -L -o docker-compose.yml https://raw.githubusercontent.com/dvejsada/mcp-ms-
 docker-compose up -d
 ```
 - MCP endpoint: `http://localhost:8958/mcp`
-- Tail logs:
-```bash
-docker-compose logs -f
-```
+
 
 ## 2) Tool overview
 
@@ -51,29 +48,33 @@ The server exposes these MCP tools:
   - Accepts subject, to/cc/bcc, priority, language, and raw content (no <html>/<body>/<style>)
 
 Dynamic email tools (optional):
-- If `config/email_templates.yaml` exists, each entry is registered as its own email-draft tool at startup.
+- If `config/email_templates.yaml` exists, each entry is registered as its own email-draft tool at startup. See below for details.
 
 Outputs:
 - LOCAL: files saved to `output/` and reported back
 - S3/GCS/AZURE: a time-limited download link is returned (TTL via `SIGNED_URL_EXPIRES_IN`)
 
-## 3) Custom templates settings
+## 3) Custom templates
 
-Use your own branding by providing files under `templates/`:
+You can provide custom templates for PowerPoint, Word, and email.
 
-- PowerPoint: `template_4_3.pptx`, `template_16_9.pptx`
-- Word: `template.docx`
-- Email wrapper: `general_template.html` (injects `{{{content}}}`; may use `{{subject}}`/`{{language}}`)
+Place files in `custom_templates/`.
+
+- PowerPoint: `custom_pptx_template_4_3.pptx`, `custom_pptx_template_16_9.pptx`
+
+- Word: `custom_docx_template.docx`
+
+- Email wrapper : `custom_email_template.html` - base your template on `default_templates/default_email_template.html`
 
 Dynamic email templates (optional):
 
-- Create `config/email_templates.yaml` and reference HTML files in `templates/`
+- Create `config/email_templates.yaml` and reference HTML files by filename only (no paths).
 - Example entry:
 ```yaml
 templates:
   - name: welcome_email
     description: Welcome email with optional promo code
-    html_path: welcome_email.html  # file must exist in templates/
+    html_path: welcome_email.html  # file must exist in custom_templates/ or default_templates/
     annotations:
       title: Welcome Email
     args:
@@ -87,7 +88,7 @@ templates:
         type: string
         required: false
 ```
-- Minimal example HTML (place in `templates/welcome_email.html`):
+- Minimal example HTML (place in `custom_templates/welcome_email.html`):
 ```html
 <!DOCTYPE html>
 <html lang="en">
@@ -103,8 +104,5 @@ templates:
 </body>
 </html>
 ```
+- Subject, to, cc, bcc, priority, and language are handled automatically and added to each template tool.
 - Tip: use `{{variable}}` for escaped text; `{{{variable}}}` for raw HTML
-
-Notes:
-- Logging is centralized and controlled by `.env` (INFO or DEBUG)
-- All runtime settings except email templates are read from `.env`; no other module reads environment variables directly

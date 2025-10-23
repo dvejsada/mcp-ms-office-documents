@@ -3,6 +3,7 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 import logging
+from upload_tools import upload_file
 
 logger = logging.getLogger(__name__)
 
@@ -428,7 +429,6 @@ def markdown_to_excel(markdown_content):
         logger.info("Saving Excel workbook to memory buffer")
         wb.save(file_object)
         file_object.seek(0)
-        from upload_file import upload_file
         result = upload_file(file_object, "xlsx")
         logger.info(f"Excel upload completed (headers={headers_count}, tables={tables_count})")
         return result

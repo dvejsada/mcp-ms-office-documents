@@ -1,10 +1,10 @@
 from pptx import Presentation
 from pptx.enum.text import PP_ALIGN
-from upload_file import upload_file
-from pathlib import Path
+from upload_tools import upload_file
 import io
 import logging
 from typing import List, Dict, Any
+from template_utils import find_pptx_templates
 
 TITLE_LAYOUT = 2
 SECTION_LAYOUT = 7
@@ -13,40 +13,16 @@ CONTENT_LAYOUT = 4
 # Create a logger
 logger = logging.getLogger(__name__)
 
+
 def load_templates():
-    """Loads presentation templates, returns None if not found"""
-    # Get the current working directory
-    current_dir = Path.cwd()
+    """Resolve presentation templates (4:3, 16:9) from custom/default template dirs.
 
-    # Try multiple potential template locations for custom templates first
-    custom_template_paths = [
-        # Production: if working directory is 'app', templates should be in app/templates
-        (current_dir / "templates" / "template_4_3.pptx",
-         current_dir / "templates" / "template_16_9.pptx"),
-        # Development: if running from src folder, go up one level to find templates
-        (current_dir.parent / "templates" / "template_4_3.pptx",
-         current_dir.parent / "templates" / "template_16_9.pptx"),
-        # Fallback: relative to this script's location
-        (Path(__file__).parent.parent / "templates" / "template_4_3.pptx",
-         Path(__file__).parent.parent / "templates" / "template_16_9.pptx")
-    ]
-
-    # Check for custom templates first
-    for template_4_3, template_16_9 in custom_template_paths:
-        if template_4_3.exists() and template_16_9.exists():
-            logger.debug(f"Found custom PPT templates: 4:3={template_4_3}, 16:9={template_16_9}")
-            return str(template_4_3), str(template_16_9)
-
-    # Fallback to built-in templates in src folder
-    fallback_4_3 = Path(__file__).parent / "template_general_4_3.pptx"
-    fallback_16_9 = Path(__file__).parent / "template_general_16_9.pptx"
-
-    if fallback_4_3.exists() and fallback_16_9.exists():
-        logger.debug(f"Using fallback PPT templates: 4:3={fallback_4_3}, 16:9={fallback_16_9}")
-        return str(fallback_4_3), str(fallback_16_9)
-    else:
-        logger.warning("Template files not found, will use default PowerPoint templates")
-        return None, None
+    Returns: tuple[str|None, str|None] -> (path_4_3, path_16_9)
+    """
+    t43, t169 = find_pptx_templates()
+    if not t43 or not t169:
+        logger.info("One or more PPT templates missing; will fall back to PowerPoint defaults where needed")
+    return t43, t169
 
 
 class PowerpointPresentation:

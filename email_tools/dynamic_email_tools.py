@@ -3,8 +3,8 @@
 Updated assumptions:
   - YAML lives in `config/` (e.g. config/email_templates.yaml)
   - Each template's `html_path` is ONLY a filename (no path separators)
-  - The HTML file is located in the project `templates/` directory (sibling of `config/`)
-  - No fallback or recursive searching; exactly: templates/<html_path>
+  - The HTML file is resolved via custom_templates first, then default_templates
+    (and corresponding /app/* paths in production)
 """
 from __future__ import annotations
 
@@ -20,12 +20,8 @@ from pydantic import Field, create_model
 from fastmcp import FastMCP
 import logging
 
-try:  # local import pattern consistent with other modules
-    from upload_file import upload_file  # type: ignore
-except ImportError:  # pragma: no cover
-    import os, sys
-    sys.path.append(os.path.abspath(Path(__file__).resolve().parent.parent))
-    from upload_file import upload_file  # type: ignore
+from upload_tools import upload_file
+from template_utils import find_email_template
 
 __all__ = ["register_email_template_tools_from_yaml"]
 
@@ -60,9 +56,6 @@ def register_email_template_tools_from_yaml(mcp: FastMCP, yaml_path: Path) -> No
         logger.error("[dynamic-email] 'templates' key must be a list – skipping.")
         return
 
-    project_root = yaml_path.parent.parent  # assumes config/ under project root
-    templates_dir = project_root / "templates"
-
     for spec in templates:
         try:
             name = spec["name"]
@@ -79,12 +72,12 @@ def register_email_template_tools_from_yaml(mcp: FastMCP, yaml_path: Path) -> No
                 logger.error(f"[dynamic-email] html_path must be filename only (no directories, no absolute paths) for {name}; got '{html_path}'")
                 continue
 
-            template_path = templates_dir / html_path
-            if not template_path.exists():
-                logger.error(f"[dynamic-email] Template file not found for {name}: {template_path}")
+            resolved = find_email_template(html_path)
+            if not resolved:
+                logger.error(f"[dynamic-email] Template file not found for {name}: {html_path}")
                 continue
-            logger.info(f"[dynamic-email] Using template for {name}: {template_path}")
-            html_source = template_path.read_text(encoding="utf-8")
+            logger.info(f"[dynamic-email] Using template for {name}: {resolved}")
+            html_source = Path(resolved).read_text(encoding="utf-8")
 
             fields: Dict[str, Any] = dict(BASE_FIELDS)
 
@@ -121,7 +114,7 @@ def register_email_template_tools_from_yaml(mcp: FastMCP, yaml_path: Path) -> No
             model = create_model(f"{name}_Args", **fields)  # type: ignore
             globals()[model.__name__] = model
 
-            renderer = pystache.Renderer(search_dirs=[str(templates_dir)], file_encoding="utf-8")
+            renderer = pystache.Renderer(file_encoding="utf-8")
 
             def make_tool_fn(_model=model, _html=html_source, _renderer=renderer, _name=name):
                 def tool_impl(data):

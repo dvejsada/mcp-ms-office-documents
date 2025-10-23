@@ -2,7 +2,7 @@ from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 from typing import Annotated, List, Dict, Optional, Literal
 from create_xlsx import markdown_to_excel
-from create_docx import markdown_to_word
+from docx_tools import markdown_to_word
 from create_pptx import create_presentation
 from email_tools import create_eml
 from email_tools.dynamic_email_tools import register_email_template_tools_from_yaml

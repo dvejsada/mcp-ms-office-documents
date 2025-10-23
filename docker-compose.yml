@@ -11,8 +11,8 @@ services:
     volumes:
       # Local output directory (used by LOCAL strategy)
       - ./output:/app/output
-      # Custom Office templates (optional: template_4_3.pptx, template_16_9.pptx, template.docx, email general_template.html)
-      - ./templates:/app/templates
+      # Custom Office templates (optional): custom_pptx_template_4_3.pptx, custom_pptx_template_16_9.pptx, custom_docx_template.docx, custom_email_template.html
+      - ./custom_templates:/app/custom_templates
       # Config directory containing:
       #   - email_templates.yaml (dynamic email tool definitions – Mustache templates)
       #   - credentials or other configuration files (e.g., GCS service account JSON)
