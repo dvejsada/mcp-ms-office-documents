@@ -41,15 +41,19 @@ else:
     )
 
 class PowerPointSlide(BaseModel):
-    """PowerPoint slide - can be title, section, or content slide based on slide_type."""
-    slide_type: Literal["title", "section", "content"] = Field(description="Type of slide: 'title' for presentation opening, 'section' for dividers, 'content' for slide with bullet points")
+    """PowerPoint slide - can be title, section, content, or table slide based on slide_type."""
+    slide_type: Literal["title", "section", "content", "table"] = Field(description="Type of slide: 'title' for presentation opening, 'section' for dividers, 'content' for slide with bullet points, 'table' for slide with a table")
     slide_title: str = Field(description="Title text for the slide")
 
     # Optional fields based on slide type
-    author: Optional[str] = Field(default="", description="Author name for title slides - appears in subtitle placeholder. Leave empty for section/content slides.")
+    author: Optional[str] = Field(default="", description="Author name for title slides - appears in subtitle placeholder. Leave empty for section/content/table slides.")
     slide_text: Optional[List[Dict]] = Field(
         default=None,
-        description="Array of bullet points for content slides. Each bullet point must have 'text' (string) and 'indentation_level' (integer 1-5). Leave empty/null for title and section slides."
+        description="Array of bullet points for content slides. Each bullet point must have 'text' (string) and 'indentation_level' (integer 1-5). Leave empty/null for title, section, and table slides."
+    )
+    table_data: Optional[List[List[str]]] = Field(
+        default=None,
+        description="Table data for table slides. A list of rows where each row is a list of cell values (strings). The first row is treated as the header row. Leave empty/null for title, section, and content slides."
     )
 
 @mcp.tool(
