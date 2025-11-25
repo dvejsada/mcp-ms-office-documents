@@ -51,35 +51,6 @@ def parse_table(table_data: List[List[str]]) -> List[List[str]]:
     return cleaned_data
 
 
-def parse_markdown_table(lines: List[str]) -> List[List[str]]:
-    """Parse markdown table lines and return table data.
-
-    Args:
-        lines: List of markdown table lines (each line starts and ends with |).
-
-    Returns:
-        List of rows, where each row is a list of cell strings.
-    """
-    if not lines:
-        return []
-
-    table_data = []
-    for line in lines:
-        line = line.strip()
-        if not line.startswith('|') or not line.endswith('|'):
-            continue
-
-        # Skip separator line (contains dashes)
-        if '---' in line or ':-:' in line or ':--' in line or '--:' in line:
-            continue
-
-        # Split by | and clean up
-        cells = [cell.strip() for cell in line.split('|')[1:-1]]  # Remove empty first/last
-        table_data.append(cells)
-
-    return table_data
-
-
 class PowerpointPresentation:
     """Helper to build a PPTX presentation from structured slide dictionaries."""
 
@@ -283,7 +254,7 @@ class PowerpointPresentation:
 
             # Calculate table dimensions
             num_rows = len(table_data)
-            num_cols = max(len(row) for row in table_data) if table_data else 0
+            num_cols = max((len(row) for row in table_data), default=0)
 
             if num_rows == 0 or num_cols == 0:
                 logger.warning("Invalid table dimensions")
