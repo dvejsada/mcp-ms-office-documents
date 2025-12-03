@@ -121,12 +121,39 @@ class AzureSettings(BaseModel):
         return self
 
 
+class MinioSettings(BaseModel):
+    """Configuration for self-hosted MinIO (S3-compatible) uploads."""
+
+    endpoint: str = Field(description="Base URL of the MinIO server, e.g., http://minio:9000")
+    access_key: str
+    secret_key: str
+    bucket: str
+    region: str = Field(default="us-east-1", description="Region to report to boto3; defaults to us-east-1")
+    verify_ssl: bool = Field(default=True, description="Whether to verify SSL certificates when connecting")
+    path_style: bool = Field(default=True, description="Use path-style addressing (recommended for MinIO)")
+
+    @model_validator(mode="after")
+    def _non_empty(self) -> "MinioSettings":
+        missing = [
+            name for name, val in (
+                ("MINIO_ENDPOINT", self.endpoint),
+                ("MINIO_ACCESS_KEY", self.access_key),
+                ("MINIO_SECRET_KEY", self.secret_key),
+                ("MINIO_BUCKET", self.bucket),
+            ) if not str(val).strip()
+        ]
+        if missing:
+            raise ValueError(f"Missing required MinIO settings: {', '.join(missing)}")
+        return self
+
+
 class StorageStrategy(str, Enum):
     """Supported upload backends for produced documents."""
     LOCAL = "LOCAL"
     S3 = "S3"
     GCS = "GCS"
     AZURE = "AZURE"
+    MINIO = "MINIO"
 
 
 class StorageSettings(BaseModel):
@@ -142,6 +169,7 @@ class StorageSettings(BaseModel):
     s3: Optional[S3Settings] = None
     gcs: Optional[GCSSettings] = None
     azure: Optional[AzureSettings] = None
+    minio: Optional[MinioSettings] = None
 
     @model_validator(mode="after")
     def validate_strategy_requirements(self) -> "StorageSettings":
@@ -155,6 +183,9 @@ class StorageSettings(BaseModel):
         elif self.strategy == StorageStrategy.AZURE:
             if not self.azure:
                 raise ValueError("Azure settings are required for AZURE strategy")
+        elif self.strategy == StorageStrategy.MINIO:
+            if not self.minio:
+                raise ValueError("MinIO settings are required for MINIO strategy")
         return self
 
 
@@ -196,6 +227,7 @@ class Config(BaseModel):
         s3_settings = None
         gcs_settings = None
         azure_settings = None
+        minio_settings = None
 
         if strategy == StorageStrategy.S3.value:
             s3_settings = S3Settings(
@@ -216,6 +248,16 @@ class Config(BaseModel):
                 container=os.environ.get("AZURE_CONTAINER", ""),
                 endpoint=os.environ.get("AZURE_BLOB_ENDPOINT"),
             )
+        elif strategy == StorageStrategy.MINIO.value:
+            minio_settings = MinioSettings(
+                endpoint=os.environ.get("MINIO_ENDPOINT", ""),
+                access_key=os.environ.get("MINIO_ACCESS_KEY", ""),
+                secret_key=os.environ.get("MINIO_SECRET_KEY", ""),
+                bucket=os.environ.get("MINIO_BUCKET", ""),
+                region=os.environ.get("MINIO_REGION", "us-east-1") or "us-east-1",
+                verify_ssl=cls._parse_bool(os.environ.get("MINIO_VERIFY_SSL", "true")),
+                path_style=cls._parse_bool(os.environ.get("MINIO_PATH_STYLE", "true")),
+            )
 
         storage_settings = StorageSettings(
             strategy=StorageStrategy(strategy),
@@ -223,6 +265,7 @@ class Config(BaseModel):
             s3=s3_settings,
             gcs=gcs_settings,
             azure=azure_settings,
+            minio=minio_settings,
         )
 
         try:

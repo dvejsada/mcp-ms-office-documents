@@ -18,8 +18,8 @@ curl -L -o docker-compose.yml https://raw.githubusercontent.com/dvejsada/mcp-ms-
   - Copy `.env.example` to `.env`
   - Edit `.env`:
     - `LOG_LEVEL=INFO|DEBUG`
-    - `UPLOAD_STRATEGY=LOCAL|S3|GCS|AZURE`
-    - For S3/GCS/AZURE, fill the required credentials
+    - `UPLOAD_STRATEGY=LOCAL|S3|GCS|AZURE|MINIO`
+    - For S3/GCS/AZURE/MINIO, fill the required credentials
 - Start the server:
 ```bash
 docker-compose up -d
@@ -54,7 +54,24 @@ Dynamic email tools (optional):
 
 Outputs:
 - LOCAL: files saved to `output/` and reported back
-- S3/GCS/AZURE: a time-limited download link is returned (TTL via `SIGNED_URL_EXPIRES_IN`)
+- S3/GCS/AZURE/MINIO: a time-limited download link is returned (TTL via `SIGNED_URL_EXPIRES_IN`)
+
+### MinIO private storage
+
+You can point the server to a self-hosted MinIO instance (or any other S3 compatible storage) by setting `UPLOAD_STRATEGY=MINIO` and providing:
+
+```
+MINIO_ENDPOINT=https://minio.example.com
+MINIO_ACCESS_KEY=...
+MINIO_SECRET_KEY=...
+MINIO_BUCKET=office-documents
+MINIO_REGION=us-east-1          # optional, defaults to us-east-1
+MINIO_VERIFY_SSL=true           # optional, set to false for self-signed endpoints
+MINIO_PATH_STYLE=true           # optional, defaults to true (recommended for MinIO)
+SIGNED_URL_EXPIRES_IN=3600      # optional TTL in seconds for download links
+```
+
+The MinIO backend reuses the existing boto3 dependency and generates pre-signed download links just like the AWS S3 strategy. Ensure the bucket exists and the provided credentials have `s3:PutObject`/`s3:GetObject` permissions.
 
 ## 3) Custom templates
 
