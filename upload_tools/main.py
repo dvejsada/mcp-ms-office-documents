@@ -5,6 +5,7 @@ from .backends.local import upload_to_local_folder
 from .backends.s3 import upload_to_s3
 from .backends.gcs import upload_to_gcs
 from .backends.azure import upload_to_azure
+from .backends.minio import upload_to_minio
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,8 @@ elif UPLOAD_STRATEGY == "GCS":
     logger.info("GCS upload strategy set.")
 elif UPLOAD_STRATEGY == "AZURE":
     logger.info("Azure Blob upload strategy set.")
+elif UPLOAD_STRATEGY == "MINIO":
+    logger.info("MinIO upload strategy set.")
 
 
 def upload_file(file_object, suffix: str):
@@ -44,5 +47,7 @@ def upload_file(file_object, suffix: str):
         return upload_to_gcs(file_object, object_name, cfg.storage.gcs, SIGNED_URL_EXPIRES_IN)
     elif UPLOAD_STRATEGY == "AZURE":
         return upload_to_azure(file_object, object_name, cfg.storage.azure, SIGNED_URL_EXPIRES_IN)
+    elif UPLOAD_STRATEGY == "MINIO":
+        return upload_to_minio(file_object, object_name, cfg.storage.minio, SIGNED_URL_EXPIRES_IN)
     else:
         return "No upload strategy set, presentation cannot be created."
