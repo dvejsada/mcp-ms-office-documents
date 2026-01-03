@@ -105,24 +105,36 @@ async def create_word_document(
 
 @mcp.tool(
     name="create_powerpoint_presentation",
-    description="Creates PowerPoint presentations with professional templates using structured slide models.",
+    description="Creates PowerPoint presentations from structured slides.",
     tags={"powerpoint", "presentation", "slides"},
     annotations={"title": "PowerPoint Presentation Creator"}
 )
 async def create_powerpoint_presentation(
-    slides: List[PowerPointSlide],
+    slides: Annotated[List[dict], Field(
+        description="""List of slide objects. Each slide requires 'slide_type' (str) and type-specific fields:
+
+- title: {slide_type: str, slide_title: str, author?: str}
+- section: {slide_type: str, slide_title: str}
+- content: {slide_type: str, slide_title: str, slide_text: [{text: str, indentation_level: int (1-3)}]}
+- table: {slide_type: str, slide_title: str, table_data: [[str]] (first row = header)}
+- image: {slide_type: str, slide_title?: str, image_url: str, image_caption?: str}
+- two_column: {slide_type: str, slide_title: str, left_column: [{text: str, indentation_level: int}], right_column: [{text: str, indentation_level: int}]}
+- chart: {slide_type: str, slide_title: str, chart_type: str (bar|column|line|pie|doughnut), chart_data: {categories: [str], series: [{name: str, values: [number]}]}}
+- quote: {slide_type: str, quote_text: str, quote_author?: str}
+
+All slides support optional 'speaker_notes': str field."""
+    )],
     format: Annotated[Literal["4:3", "16:9"], Field(
-        default="4:3",
-        description="Presentation formating: '4:3' for traditional or '16:9' for widescreen"
-    )]
+        default="16:9",
+        description="Aspect ratio: '16:9' (widescreen) or '4:3' (traditional)"
+    )] = "16:9"
 ) -> str:
     """Creates PowerPoint presentations with structured slide models and professional templates."""
 
     logger.info(f"Creating PowerPoint presentation with {len(slides)} slides in {format} format")
 
     try:
-        slides_data = [slide.model_dump() for slide in slides]
-        result = create_presentation(slides_data, format)
+        result = create_presentation(slides, format)
         logger.info(f"PowerPoint presentation created: {result}")
         return result
     except Exception as e:
