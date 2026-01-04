@@ -33,8 +33,7 @@ The server exposes these MCP tools:
 
 - create_powerpoint_presentation
   - Creates a .pptx from structured slides (title, section, content) with optional templates
-  - Required input: slides array with slide_type and slide_title; optional author and slide_text for content slides
-  - Format: `4:3` (default) or `16:9`
+  - Format: `4:3`  or `16:9`(default)
 
 - create_word_from_markdown
   - Converts Markdown to .docx, supporting headers, lists, tables, inline formatting, links, block quotes
@@ -97,14 +96,13 @@ templates:
     annotations:
       title: Welcome Email
     args:
-      - name: subject
-        type: string
-        required: true
       - name: first_name
         type: string
+        description: Recipient's first name
         required: true
       - name: promo_code
         type: string
+        description: Optional promotional code (html formatted)
         required: false
 ```
 - Minimal example HTML (place in `custom_templates/welcome_email.html`):
@@ -113,7 +111,6 @@ templates:
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>{{subject}}</title>
 </head>
 <body>
   <h2>Welcome {{first_name}}!</h2>
