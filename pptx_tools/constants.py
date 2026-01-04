@@ -9,13 +9,16 @@ from pptx.dml.color import RGBColor
 
 
 # =============================================================================
-# Slide Layout Indices (may vary by template)
+# Slide Layout Indices (PowerPoint default template)
 # =============================================================================
 
-TITLE_LAYOUT = 2
-SECTION_LAYOUT = 7
-CONTENT_LAYOUT = 4
-BLANK_LAYOUT = 6
+TITLE_LAYOUT = 0           # Title Slide
+CONTENT_LAYOUT = 1         # Title and Content
+SECTION_LAYOUT = 2         # Section Header
+TWO_COLUMN_LAYOUT = 3      # Two Content (no subheaders)
+TWO_COLUMN_TEXT_LAYOUT = 4 # Comparison (with subheaders)
+TITLE_ONLY_LAYOUT = 5      # Title Only
+BLANK_LAYOUT = 6           # Blank
 
 
 # =============================================================================

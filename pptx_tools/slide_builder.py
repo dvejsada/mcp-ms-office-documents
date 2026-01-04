@@ -15,8 +15,8 @@ from pptx.util import Inches, Pt
 from template_utils import find_pptx_templates
 from .constants import (
     TITLE_LAYOUT, SECTION_LAYOUT, CONTENT_LAYOUT,
+    TWO_COLUMN_LAYOUT, TWO_COLUMN_TEXT_LAYOUT,
     DEFAULT_SUBTITLE_FONT_SIZE, DEFAULT_CAPTION_FONT_SIZE, DEFAULT_QUOTE_FONT_SIZE,
-    MARGIN_LEFT, MARGIN_TOP, MARGIN_BOTTOM, CONTENT_TOP,
     TABLE_HEADER_FILL,
 )
 from .helpers import (
@@ -173,14 +173,9 @@ class PowerpointPresentation(SlideHelperMixin, TextHelperMixin, TableHelperMixin
         self._add_speaker_notes(slide, data.get("speaker_notes"))
 
     def _build_table_slide(self, data: Dict[str, Any]) -> None:
-        """Build a table slide with styled table."""
-        slide = self._add_blank_slide()
-        slide_width, slide_height = self._get_slide_dimensions()
-
-        # Title
+        """Build a table slide with styled table using Title and Content layout."""
         title = data.get("slide_title", "")
-        if title:
-            self._add_title_textbox(slide, title)
+        slide, left, top, width, height = self._add_title_content_slide(title)
 
         # Table
         table_data = parse_table_data(data.get("table_data", []))
@@ -196,10 +191,10 @@ class PowerpointPresentation(SlideHelperMixin, TextHelperMixin, TableHelperMixin
         self._create_styled_table(
             slide,
             table_data,
-            left=MARGIN_LEFT,
-            top=CONTENT_TOP,
-            width=slide_width - (2 * MARGIN_LEFT),
-            height=slide_height - CONTENT_TOP - MARGIN_BOTTOM,
+            left=left,
+            top=top,
+            width=width,
+            height=height,
             header_color=header_color,
             alternate_rows=data.get("alternate_rows", True)
         )
@@ -207,38 +202,31 @@ class PowerpointPresentation(SlideHelperMixin, TextHelperMixin, TableHelperMixin
         self._add_speaker_notes(slide, data.get("speaker_notes"))
 
     def _build_image_slide(self, data: Dict[str, Any]) -> None:
-        """Build a slide with an image from URL."""
-        slide = self._add_blank_slide()
-        slide_width, slide_height = self._get_slide_dimensions()
-
-        # Title
+        """Build a slide with an image from URL using Title and Content layout."""
         title = data.get("slide_title", "")
-        content_top = CONTENT_TOP if title else MARGIN_TOP
-        if title:
-            self._add_title_textbox(slide, title)
+        slide, left, top, width, height = self._add_title_content_slide(title)
 
         # Image
         image_url = data.get("image_url", "")
         caption = data.get("image_caption", "")
 
-        max_height = slide_height - content_top - (Inches(0.8) if caption else MARGIN_BOTTOM)
-        max_width = slide_width - (2 * MARGIN_LEFT)
+        max_height = height - (Inches(0.6) if caption else 0)
 
         if image_url:
             picture = self._add_image_from_url(
                 slide, image_url,
-                left=MARGIN_LEFT,
-                top=content_top,
-                max_width=max_width,
+                left=left,
+                top=top,
+                max_width=width,
                 max_height=max_height
             )
 
             if picture and caption:
                 self._add_text_box(
                     slide, caption,
-                    left=MARGIN_LEFT,
+                    left=left,
                     top=picture.top + picture.height + Inches(0.1),
-                    width=slide_width - (2 * MARGIN_LEFT),
+                    width=width,
                     height=Inches(0.5),
                     font_size=DEFAULT_CAPTION_FONT_SIZE,
                     italic=True,
@@ -247,82 +235,76 @@ class PowerpointPresentation(SlideHelperMixin, TextHelperMixin, TableHelperMixin
             elif not picture:
                 self._add_image_placeholder(
                     slide, "Image could not be loaded",
-                    MARGIN_LEFT, content_top + Inches(1), max_width
+                    left, top + Inches(1), width
                 )
 
         self._add_speaker_notes(slide, data.get("speaker_notes"))
 
     def _build_two_column_slide(self, data: Dict[str, Any]) -> None:
-        """Build a slide with two text columns."""
-        slide = self._add_blank_slide()
-        slide_width, slide_height = self._get_slide_dimensions()
+        """Build a slide with two text columns using built-in PowerPoint layouts.
 
-        # Title
-        title = data.get("slide_title", "")
-        content_top = CONTENT_TOP if title else MARGIN_TOP
-        if title:
-            self._add_title_textbox(slide, title)
+        Uses TWO_COLUMN_TEXT_LAYOUT (Comparison) if subheaders are provided,
+        otherwise uses TWO_COLUMN_LAYOUT (Two Content).
 
-        # Column dimensions
-        gap = Inches(0.5)
-        column_width = (slide_width - (2 * MARGIN_LEFT) - gap) / 2
-        column_height = slide_height - content_top - MARGIN_BOTTOM
-
-        left_x = MARGIN_LEFT
-        right_x = MARGIN_LEFT + column_width + gap
-
-        # Column headings
-        heading_height = Inches(0.5)
+        Placeholder indices:
+        - Two Content (3): idx 0=Title, 1=Left content, 2=Right content
+        - Comparison (4): idx 0=Title, 1=Left subheader, 2=Left content, 3=Right subheader, 4=Right content
+        """
         left_heading = data.get("left_heading", "")
         right_heading = data.get("right_heading", "")
+        has_subheaders = bool(left_heading or right_heading)
 
-        if left_heading:
-            self._add_text_box(
-                slide, left_heading,
-                left_x, content_top, column_width, heading_height,
-                font_size=DEFAULT_SUBTITLE_FONT_SIZE, bold=True
-            )
-        if right_heading:
-            self._add_text_box(
-                slide, right_heading,
-                right_x, content_top, column_width, heading_height,
-                font_size=DEFAULT_SUBTITLE_FONT_SIZE, bold=True
-            )
+        # Choose layout based on whether subheaders are needed
+        if has_subheaders:
+            layout = self.presentation.slide_layouts[TWO_COLUMN_TEXT_LAYOUT]
+        else:
+            layout = self.presentation.slide_layouts[TWO_COLUMN_LAYOUT]
 
-        # Adjust for headings
-        list_top = content_top + (heading_height if (left_heading or right_heading) else 0)
-        list_height = column_height - (heading_height if (left_heading or right_heading) else 0)
+        slide = self.presentation.slides.add_slide(layout)
 
-        # Column content
-        self._add_bullet_list(
-            slide, data.get("left_column", []),
-            left_x, list_top, column_width, list_height
-        )
-        self._add_bullet_list(
-            slide, data.get("right_column", []),
-            right_x, list_top, column_width, list_height
-        )
+        # Fill placeholders based on layout type
+        for shape in slide.placeholders:
+            idx = shape.placeholder_format.idx
+
+            # Title placeholder (idx 0) - both layouts
+            if idx == 0:
+                title = data.get("slide_title", "")
+                if title:
+                    shape.text = title
+
+            elif has_subheaders:
+                # Comparison layout indices
+                if idx == 1:  # Left subheader
+                    if left_heading:
+                        shape.text = left_heading
+                elif idx == 2:  # Left content
+                    self._fill_placeholder_with_bullets(shape, data.get("left_column", []))
+                elif idx == 3:  # Right subheader
+                    if right_heading:
+                        shape.text = right_heading
+                elif idx == 4:  # Right content
+                    self._fill_placeholder_with_bullets(shape, data.get("right_column", []))
+            else:
+                # Two Content layout indices
+                if idx == 1:  # Left content
+                    self._fill_placeholder_with_bullets(shape, data.get("left_column", []))
+                elif idx == 2:  # Right content
+                    self._fill_placeholder_with_bullets(shape, data.get("right_column", []))
 
         self._add_speaker_notes(slide, data.get("speaker_notes"))
 
 
     def _build_chart_slide(self, data: Dict[str, Any]) -> None:
-        """Build a slide with a chart."""
-        slide = self._add_blank_slide()
-        slide_width, slide_height = self._get_slide_dimensions()
-
-        # Title
+        """Build a slide with a chart using Title and Content layout."""
         title = data.get("slide_title", "")
-        content_top = CONTENT_TOP if title else MARGIN_TOP
-        if title:
-            self._add_title_textbox(slide, title)
+        slide, left, top, width, height = self._add_title_content_slide(title)
 
         # Chart
         chart_data = data.get("chart_data", {})
         if not chart_data:
             self._add_text_box(
                 slide, "[No chart data provided]",
-                MARGIN_LEFT, content_top, slide_width - (2 * MARGIN_LEFT), Inches(1),
+                left, top, width, Inches(1),
                 alignment=PP_ALIGN.CENTER
             )
             return
@@ -332,10 +314,10 @@ class PowerpointPresentation(SlideHelperMixin, TextHelperMixin, TableHelperMixin
                 slide,
                 chart_type=data.get("chart_type", "bar"),
                 chart_data=chart_data,
-                left=MARGIN_LEFT,
-                top=content_top,
-                width=slide_width - (2 * MARGIN_LEFT),
-                height=slide_height - content_top - MARGIN_BOTTOM,
+                left=left,
+                top=top,
+                width=width,
+                height=height,
                 has_legend=data.get("has_legend", True),
                 legend_position=data.get("legend_position", "right")
             )
@@ -343,7 +325,7 @@ class PowerpointPresentation(SlideHelperMixin, TextHelperMixin, TableHelperMixin
             logger.error(f"Chart error: {e}")
             self._add_text_box(
                 slide, f"[Chart error: {e}]",
-                MARGIN_LEFT, content_top, slide_width - (2 * MARGIN_LEFT), Inches(1),
+                left, top, width, Inches(1),
                 alignment=PP_ALIGN.CENTER
             )
 
@@ -351,27 +333,15 @@ class PowerpointPresentation(SlideHelperMixin, TextHelperMixin, TableHelperMixin
 
 
     def _build_quote_slide(self, data: Dict[str, Any]) -> None:
-        """Build a quote/citation slide."""
-        slide = self._add_blank_slide()
-        slide_width, slide_height = self._get_slide_dimensions()
-
-        # Title (optional)
+        """Build a quote/citation slide using Title and Content layout."""
         title = data.get("slide_title", "")
-        content_top = CONTENT_TOP if title else Inches(2)
-        if title:
-            self._add_title_textbox(slide, title)
+        slide, left, top, width, height = self._add_title_content_slide(title)
 
         # Quote
         quote_text = data.get("quote_text", "")
         quote_author = data.get("quote_author", "")
 
-        quote_margin = Inches(1)
-        quote_width = slide_width - (2 * quote_margin)
-
-        quote_box = slide.shapes.add_textbox(
-            quote_margin, content_top,
-            quote_width, slide_height - content_top - Inches(2)
-        )
+        quote_box = slide.shapes.add_textbox(left, top, width, height)
         tf = quote_box.text_frame
         tf.word_wrap = True
 

@@ -13,7 +13,7 @@ from pptx.dml.color import RGBColor
 from pptx.oxml import parse_xml
 
 from .constants import (
-    BLANK_LAYOUT,
+    BLANK_LAYOUT, CONTENT_LAYOUT,
     DEFAULT_TITLE_FONT_SIZE, DEFAULT_BODY_FONT_SIZE,
     MARGIN_LEFT, MARGIN_TOP, TITLE_HEIGHT,
     TABLE_HEADER_FILL, TABLE_HEADER_TEXT, TABLE_ALT_ROW_FILL,
@@ -79,6 +79,47 @@ class SlideHelperMixin:
         """Add a blank slide and return it."""
         layout = self.presentation.slide_layouts[BLANK_LAYOUT]
         return self.presentation.slides.add_slide(layout)
+
+    def _add_title_content_slide(self, title: str = ""):
+        """Add a Title and Content slide and return slide with content placeholder info.
+
+        Args:
+            title: Title text for the slide.
+
+        Returns:
+            Tuple of (slide, content_left, content_top, content_width, content_height)
+        """
+        layout = self.presentation.slide_layouts[CONTENT_LAYOUT]
+        slide = self.presentation.slides.add_slide(layout)
+
+        # Set title
+        if title and len(slide.placeholders) > 0:
+            slide.placeholders[0].text = title
+
+        # Get content placeholder bounds (idx 1)
+        content_placeholder = None
+        for placeholder in slide.placeholders:
+            if placeholder.placeholder_format.idx == 1:
+                content_placeholder = placeholder
+                break
+
+        if content_placeholder:
+            left = content_placeholder.left
+            top = content_placeholder.top
+            width = content_placeholder.width
+            height = content_placeholder.height
+            # Remove the placeholder so we can add custom content
+            sp = content_placeholder._element
+            sp.getparent().remove(sp)
+        else:
+            # Fallback dimensions
+            slide_width, slide_height = self._get_slide_dimensions()
+            left = MARGIN_LEFT
+            top = Inches(1.5)
+            width = slide_width - (2 * MARGIN_LEFT)
+            height = slide_height - top - Inches(0.5)
+
+        return slide, left, top, width, height
 
     def _add_speaker_notes(self, slide, notes_text: Optional[str]) -> None:
         """Add speaker notes to a slide.
@@ -219,6 +260,37 @@ class TextHelperMixin:
             para.level = max(0, int(item.get("indentation_level", 1)) - 1)
 
         return shape
+
+    def _fill_placeholder_with_bullets(
+        self,
+        placeholder,
+        items: List[dict],
+        font_size: int = None
+    ):
+        """Fill a placeholder shape with bullet list content.
+
+        Args:
+            placeholder: PowerPoint placeholder shape.
+            items: List of dicts with 'text' and 'indentation_level' keys.
+            font_size: Optional font size for items.
+        """
+        if not items:
+            return
+
+        tf = placeholder.text_frame
+        tf.word_wrap = True
+
+        for i, item in enumerate(items):
+            if i == 0:
+                para = tf.paragraphs[0]
+            else:
+                para = tf.add_paragraph()
+
+            para.text = item.get("text", "")
+            if font_size:
+                para.font.size = font_size
+            para.alignment = PP_ALIGN.LEFT
+            para.level = max(0, int(item.get("indentation_level", 1)) - 1)
 
 
 class TableHelperMixin:

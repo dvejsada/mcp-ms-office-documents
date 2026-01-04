@@ -572,51 +572,95 @@ class TestCompletePresentation:
     """Test creating a complete presentation with all slide types."""
 
     def test_complete_presentation(self):
-        """Create a comprehensive presentation using all slide types."""
+        """Create a comprehensive presentation demonstrating ALL available slide layouts.
+
+        This test serves as a demonstration of all available slide types and layout options.
+        Use the generated file (31_complete_presentation.pptx) as a visual reference.
+
+        Layout mapping (PowerPoint default template):
+        - Layout 0: Title Slide (title)
+        - Layout 1: Title and Content (content, table, image, chart, quote)
+        - Layout 2: Section Header (section)
+        - Layout 3: Two Content (two_column without subheaders)
+        - Layout 4: Comparison (two_column with subheaders)
+        - Layout 5: Title Only
+        - Layout 6: Blank
+        """
         slides = [
-            # Title slide
+            # =====================================================================
+            # LAYOUT 0: Title Slide
+            # =====================================================================
             {
                 "slide_type": "title",
-                "slide_title": "Complete PowerPoint Demo",
-                "author": "MCP Office Documents"
+                "slide_title": "Complete PowerPoint Layout Demo",
+                "author": "MCP Office Documents - All Slide Types",
+                "speaker_notes": "This presentation demonstrates all available slide layouts and options."
             },
-            # Section
+
+            # =====================================================================
+            # LAYOUT 2: Section Header
+            # =====================================================================
             {
                 "slide_type": "section",
-                "slide_title": "Part 1: Basic Slides"
+                "slide_title": "Section 1: Basic Layouts"
             },
-            # Content slide
+
+            # =====================================================================
+            # LAYOUT 1: Title and Content - Bullet Points
+            # =====================================================================
             {
                 "slide_type": "content",
-                "slide_title": "Bullet Points",
+                "slide_title": "Content Slide with Bullet Points",
                 "slide_text": [
-                    {"text": "First main point", "indentation_level": 1},
-                    {"text": "Supporting detail", "indentation_level": 2},
-                    {"text": "Second main point", "indentation_level": 1}
+                    {"text": "First level bullet point", "indentation_level": 1},
+                    {"text": "Second level - more detail", "indentation_level": 2},
+                    {"text": "Third level - even more detail", "indentation_level": 3},
+                    {"text": "Back to first level", "indentation_level": 1},
+                    {"text": "Another second level point", "indentation_level": 2}
                 ],
-                "speaker_notes": "Take your time with these points"
+                "speaker_notes": "Uses Layout 1 (Title and Content). Supports up to 3 indentation levels."
             },
-            # Section
+
+            # =====================================================================
+            # LAYOUT 2: Another Section Header
+            # =====================================================================
             {
                 "slide_type": "section",
-                "slide_title": "Part 2: Data Visualization"
+                "slide_title": "Section 2: Data & Tables"
             },
-            # Table
+
+            # =====================================================================
+            # LAYOUT 1: Title and Content - Table
+            # =====================================================================
             {
                 "slide_type": "table",
-                "slide_title": "Data Table",
+                "slide_title": "Table Slide with Custom Styling",
                 "table_data": [
-                    ["Metric", "2023", "2024", "Change"],
-                    ["Revenue", "$1M", "$1.5M", "+50%"],
-                    ["Users", "10K", "25K", "+150%"],
-                    ["NPS", "45", "72", "+27pts"]
+                    ["Feature", "Basic", "Pro", "Enterprise"],
+                    ["Users", "5", "25", "Unlimited"],
+                    ["Storage", "10 GB", "100 GB", "1 TB"],
+                    ["Support", "Email", "Priority", "24/7 Dedicated"],
+                    ["Price", "$9/mo", "$29/mo", "Contact Us"]
                 ],
-                "header_color": "1565C0"
+                "header_color": "1565C0",
+                "alternate_rows": True,
+                "speaker_notes": "Uses Layout 1 (Title and Content). Table appears in content placeholder area."
             },
-            # Bar chart
+
+            # =====================================================================
+            # LAYOUT 2: Another Section Header
+            # =====================================================================
+            {
+                "slide_type": "section",
+                "slide_title": "Section 3: Charts & Visualizations"
+            },
+
+            # =====================================================================
+            # LAYOUT 1: Title and Content - Column Chart
+            # =====================================================================
             {
                 "slide_type": "chart",
-                "slide_title": "Revenue Growth",
+                "slide_title": "Column Chart - Revenue Comparison",
                 "chart_type": "column",
                 "chart_data": {
                     "categories": ["Q1", "Q2", "Q3", "Q4"],
@@ -624,61 +668,202 @@ class TestCompletePresentation:
                         {"name": "2023", "values": [200, 250, 300, 250]},
                         {"name": "2024", "values": [300, 350, 400, 450]}
                     ]
-                }
+                },
+                "has_legend": True,
+                "legend_position": "right",
+                "speaker_notes": "Uses Layout 1. Chart types: bar, column, line, pie, doughnut, stacked_bar, area"
             },
-            # Pie chart
+
+            # =====================================================================
+            # LAYOUT 1: Title and Content - Pie Chart
+            # =====================================================================
             {
                 "slide_type": "chart",
-                "slide_title": "Market Distribution",
+                "slide_title": "Pie Chart - Market Share",
                 "chart_type": "pie",
                 "chart_data": {
-                    "categories": ["Enterprise", "SMB", "Consumer"],
-                    "series": [{"name": "Revenue", "values": [45, 35, 20]}]
-                }
+                    "categories": ["Product A", "Product B", "Product C", "Other"],
+                    "series": [{"name": "Market Share", "values": [35, 28, 22, 15]}]
+                },
+                "has_legend": True,
+                "legend_position": "bottom",
+                "speaker_notes": "Pie charts work best with a single series."
             },
-            # Section
+
+            # =====================================================================
+            # LAYOUT 1: Title and Content - Line Chart
+            # =====================================================================
+            {
+                "slide_type": "chart",
+                "slide_title": "Line Chart - Trend Analysis",
+                "chart_type": "line",
+                "chart_data": {
+                    "categories": ["Jan", "Feb", "Mar", "Apr", "May", "Jun"],
+                    "series": [
+                        {"name": "Website", "values": [1000, 1200, 1100, 1400, 1600, 1800]},
+                        {"name": "Mobile App", "values": [500, 600, 800, 900, 1100, 1300]}
+                    ]
+                },
+                "speaker_notes": "Line charts are great for showing trends over time."
+            },
+
+            # =====================================================================
+            # LAYOUT 2: Another Section Header
+            # =====================================================================
             {
                 "slide_type": "section",
-                "slide_title": "Part 3: Layout Options"
+                "slide_title": "Section 4: Two Column Layouts"
             },
-            # Two column
+
+            # =====================================================================
+            # LAYOUT 3: Two Content (without subheaders)
+            # =====================================================================
             {
                 "slide_type": "two_column",
-                "slide_title": "Two Column Layout",
+                "slide_title": "Two Column Layout - No Subheaders",
+                "left_column": [
+                    {"text": "Left column content", "indentation_level": 1},
+                    {"text": "More left content", "indentation_level": 1},
+                    {"text": "Nested point", "indentation_level": 2}
+                ],
+                "right_column": [
+                    {"text": "Right column content", "indentation_level": 1},
+                    {"text": "More right content", "indentation_level": 1},
+                    {"text": "Another nested point", "indentation_level": 2}
+                ],
+                "speaker_notes": "Uses Layout 3 (Two Content). No subheaders - just title and two content areas."
+            },
+
+            # =====================================================================
+            # LAYOUT 4: Comparison (with subheaders)
+            # =====================================================================
+            {
+                "slide_type": "two_column",
+                "slide_title": "Comparison Layout - With Subheaders",
                 "left_heading": "Before",
                 "right_heading": "After",
                 "left_column": [
                     {"text": "Manual processes", "indentation_level": 1},
-                    {"text": "Slow turnaround", "indentation_level": 1}
+                    {"text": "Time-consuming", "indentation_level": 2},
+                    {"text": "Error-prone", "indentation_level": 2},
+                    {"text": "Limited scalability", "indentation_level": 1}
                 ],
                 "right_column": [
                     {"text": "Automated workflows", "indentation_level": 1},
-                    {"text": "Instant results", "indentation_level": 1}
-                ]
+                    {"text": "Fast execution", "indentation_level": 2},
+                    {"text": "Consistent results", "indentation_level": 2},
+                    {"text": "Infinitely scalable", "indentation_level": 1}
+                ],
+                "speaker_notes": "Uses Layout 4 (Comparison). Has subheaders above each column for labeling."
             },
-            # Image slide
+
+            # =====================================================================
+            # LAYOUT 4: Another Comparison Example
+            # =====================================================================
+            {
+                "slide_type": "two_column",
+                "slide_title": "Pros and Cons Analysis",
+                "left_heading": "✅ Advantages",
+                "right_heading": "❌ Disadvantages",
+                "left_column": [
+                    {"text": "Easy to use", "indentation_level": 1},
+                    {"text": "Cost effective", "indentation_level": 1},
+                    {"text": "Flexible deployment", "indentation_level": 1}
+                ],
+                "right_column": [
+                    {"text": "Learning curve", "indentation_level": 1},
+                    {"text": "Initial setup time", "indentation_level": 1},
+                    {"text": "Requires internet", "indentation_level": 1}
+                ],
+                "speaker_notes": "Comparison layout is perfect for pros/cons, before/after, or any side-by-side comparison."
+            },
+
+            # =====================================================================
+            # LAYOUT 2: Another Section Header
+            # =====================================================================
+            {
+                "slide_type": "section",
+                "slide_title": "Section 5: Images & Quotes"
+            },
+
+            # =====================================================================
+            # LAYOUT 1: Title and Content - Image
+            # =====================================================================
             {
                 "slide_type": "image",
-                "slide_title": "Product Screenshot",
+                "slide_title": "Image Slide with Caption",
                 "image_url": "https://picsum.photos/800/600",
-                "image_caption": "Our beautiful product interface"
+                "image_caption": "Sample image from picsum.photos - automatically scaled to fit",
+                "speaker_notes": "Uses Layout 1. Images are downloaded, scaled to fit, and centered."
             },
-            # Section
+
+            # =====================================================================
+            # LAYOUT 1: Title and Content - Image without title
+            # =====================================================================
+            {
+                "slide_type": "image",
+                "image_url": "https://picsum.photos/1200/800",
+                "image_caption": "Full-bleed image slide (no title)",
+                "speaker_notes": "Image slides can omit the title for a more impactful visual."
+            },
+
+            # =====================================================================
+            # LAYOUT 1: Title and Content - Quote with title
+            # =====================================================================
+            {
+                "slide_type": "quote",
+                "slide_title": "Inspirational Quote",
+                "quote_text": "The best way to predict the future is to create it.",
+                "quote_author": "Peter Drucker",
+                "speaker_notes": "Uses Layout 1. Quote slides can have an optional title."
+            },
+
+            # =====================================================================
+            # LAYOUT 1: Title and Content - Quote without title
+            # =====================================================================
+            {
+                "slide_type": "quote",
+                "quote_text": "Innovation distinguishes between a leader and a follower.",
+                "quote_author": "Steve Jobs",
+                "speaker_notes": "Quote slides without title give more prominence to the quote itself."
+            },
+
+            # =====================================================================
+            # LAYOUT 2: Final Section
+            # =====================================================================
             {
                 "slide_type": "section",
                 "slide_title": "Conclusion"
             },
-            # Quote
+
+            # =====================================================================
+            # LAYOUT 1: Summary Content Slide
+            # =====================================================================
             {
-                "slide_type": "quote",
-                "quote_text": "The best way to predict the future is to create it.",
-                "quote_author": "Peter Drucker"
+                "slide_type": "content",
+                "slide_title": "Available Slide Types Summary",
+                "slide_text": [
+                    {"text": "title - Opening slide (Layout 0: Title Slide)", "indentation_level": 1},
+                    {"text": "section - Section dividers (Layout 2: Section Header)", "indentation_level": 1},
+                    {"text": "content - Bullet points (Layout 1: Title and Content)", "indentation_level": 1},
+                    {"text": "table - Data tables (Layout 1: Title and Content)", "indentation_level": 1},
+                    {"text": "chart - Bar, column, line, pie, doughnut charts (Layout 1)", "indentation_level": 1},
+                    {"text": "two_column - Side by side content (Layout 3 or 4)", "indentation_level": 1},
+                    {"text": "Without subheaders → Two Content layout", "indentation_level": 2},
+                    {"text": "With subheaders → Comparison layout", "indentation_level": 2},
+                    {"text": "image - Images from URL (Layout 1: Title and Content)", "indentation_level": 1},
+                    {"text": "quote - Quotations (Layout 1: Title and Content)", "indentation_level": 1}
+                ],
+                "speaker_notes": "All content-based slides use the Title and Content layout for consistent positioning."
             },
-            # Final slide
+
+            # =====================================================================
+            # LAYOUT 0: Closing Title Slide
+            # =====================================================================
             {
                 "slide_type": "title",
                 "slide_title": "Thank You!",
-                "author": "Questions?"
+                "author": "Questions & Discussion"
             }
         ]
 
@@ -687,6 +872,17 @@ class TestCompletePresentation:
         assert path.exists()
         print(f"\n✅ Complete presentation saved to: {path}")
         print(f"   File size: {path.stat().st_size / 1024:.1f} KB")
+        print(f"   Total slides: {len(slides)}")
+        print(f"\n   Slide types demonstrated:")
+        print(f"   - title (Layout 0)")
+        print(f"   - section (Layout 2)")
+        print(f"   - content (Layout 1)")
+        print(f"   - table (Layout 1)")
+        print(f"   - chart - column, pie, line (Layout 1)")
+        print(f"   - two_column without subheaders (Layout 3)")
+        print(f"   - two_column with subheaders (Layout 4)")
+        print(f"   - image (Layout 1)")
+        print(f"   - quote (Layout 1)")
 
 
 class TestEdgeCases:

@@ -113,14 +113,14 @@ async def create_powerpoint_presentation(
     slides: Annotated[List[dict], Field(
         description="""List of slide objects. Each slide requires 'slide_type' (str) and type-specific fields:
 
-- title: {slide_type: str, slide_title: str, author?: str}
-- section: {slide_type: str, slide_title: str}
-- content: {slide_type: str, slide_title: str, slide_text: [{text: str, indentation_level: int (1-3)}]}
-- table: {slide_type: str, slide_title: str, table_data: [[str]] (first row = header)}
-- image: {slide_type: str, slide_title?: str, image_url: str, image_caption?: str}
-- two_column: {slide_type: str, slide_title: str, left_column: [{text: str, indentation_level: int}], right_column: [{text: str, indentation_level: int}]}
-- chart: {slide_type: str, slide_title: str, chart_type: str (bar|column|line|pie|doughnut), chart_data: {categories: [str], series: [{name: str, values: [number]}]}}
-- quote: {slide_type: str, quote_text: str, quote_author?: str}
+- title: {slide_type: "title", slide_title: str, author?: str}
+- section: {slide_type: "section", slide_title: str}
+- content: {slide_type: "content", slide_title: str, slide_text: [{text: str, indentation_level: int (1-3)}]}
+- table: {slide_type: "table", slide_title: str, table_data: [[str]] (first row = header), header_color?: str (hex), alternate_rows?: bool}
+- image: {slide_type: "image", slide_title?: str, image_url: str, image_caption?: str}
+- two_column: {slide_type: "two_column", slide_title: str, left_column: [{text: str, indentation_level: int}], right_column: [{text: str, indentation_level: int}], left_heading?: str, right_heading?: str}
+- chart: {slide_type: "chart", slide_title: str, chart_type: str (bar|column|line|pie|doughnut|stacked_bar|area), chart_data: {categories: [str], series: [{name: str, values: [number]}]}, has_legend?: bool, legend_position?: str}
+- quote: {slide_type: "quote", slide_title?: str, quote_text: str, quote_author?: str}
 
 All slides support optional 'speaker_notes': str field."""
     )],
