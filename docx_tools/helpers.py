@@ -44,14 +44,28 @@ def add_hyperlink(paragraph, text, url, color="0000FF", underline=True):
         rPr.append(c)
 
     new_run.append(rPr)
-    new_run.text = text
+
+    # Create the text element properly
+    text_elem = OxmlElement('w:t')
+    text_elem.text = text
+    # Preserve spaces at start/end
+    text_elem.set(qn('xml:space'), 'preserve')
+    new_run.append(text_elem)
+
     hyperlink.append(new_run)
 
     paragraph._p.append(hyperlink)
 
 
-def parse_inline_formatting(text, paragraph):
-    """Parse inline markdown formatting like **bold**, *italic*, and [links](url)"""
+def parse_inline_formatting(text, paragraph, bold=False, italic=False):
+    """Parse inline markdown formatting like **bold**, *italic*, and [links](url)
+
+    Args:
+        text: The text to parse
+        paragraph: The paragraph to add runs to
+        bold: Whether the current context is bold (for nested formatting)
+        italic: Whether the current context is italic (for nested formatting)
+    """
     # First handle escape characters
     text = handle_escapes(text)
 
@@ -64,7 +78,12 @@ def parse_inline_formatting(text, paragraph):
             continue
 
         # Split text by formatting markers while preserving the markers
-        parts = re.split(r'(\*\*.*?\*\*|\*.*?\*|`.*?`|\[.*?]\(.*?\))', line_part)
+        # Regex explanation:
+        # - \*\*(?:[^*]|\*(?!\*))+\*\* : bold (**...**) - matches ** followed by any chars except **, ending with **
+        # - \*(?:[^*]|\*\*[^*]*\*\*)+\* : italic (*...*) - matches * followed by any chars or nested **, ending with *
+        # - `[^`]+` : inline code
+        # - \[[^\]]*\]\([^)]*\) : links [text](url)
+        parts = re.split(r'(\*\*(?:[^*]|\*(?!\*))+\*\*|\*(?:[^*]|\*\*[^*]*\*\*)+\*|`[^`]+`|\[[^\]]*\]\([^)]*\))', line_part)
 
         for part in parts:
             if not part:
@@ -72,17 +91,23 @@ def parse_inline_formatting(text, paragraph):
 
             # Bold text (**text**)
             if part.startswith('**') and part.endswith('**'):
-                bold_text = part[2:-2]
-                paragraph.add_run(bold_text).bold = True
+                inner_text = part[2:-2]
+                # Recursively parse inner content for nested formatting (e.g., *italic* inside bold)
+                _parse_with_formatting(inner_text, paragraph, bold=True, italic=italic)
             # Italic text (*text*)
-            elif part.startswith('*') and part.endswith('*'):
-                italic_text = part[1:-1]
-                paragraph.add_run(italic_text).italic = True
+            elif part.startswith('*') and part.endswith('*') and not part.startswith('**'):
+                inner_text = part[1:-1]
+                # Recursively parse inner content for nested formatting (e.g., **bold** inside italic)
+                _parse_with_formatting(inner_text, paragraph, bold=bold, italic=True)
             # Inline code (`code`)
             elif part.startswith('`') and part.endswith('`'):
                 code_text = part[1:-1]
                 run = paragraph.add_run(code_text)
                 run.font.name = 'Courier New'
+                if bold:
+                    run.bold = True
+                if italic:
+                    run.italic = True
             # Links [text](url)
             elif part.startswith('[') and '](' in part and part.endswith(')'):
                 link_match = re.match(r'\[(.*?)]\((.*?)\)', part)
@@ -90,12 +115,61 @@ def parse_inline_formatting(text, paragraph):
                     link_text, url = link_match.groups()
                     add_hyperlink(paragraph, link_text, url)
             else:
-                # Plain text
-                paragraph.add_run(part)
+                # Plain text - apply current formatting context
+                run = paragraph.add_run(part)
+                if bold:
+                    run.bold = True
+                if italic:
+                    run.italic = True
 
         # Add line break if this isn't the last part
         if line_idx < len(line_parts) - 1:
             paragraph.add_run().add_break()
+
+
+def _parse_with_formatting(text, paragraph, bold=False, italic=False):
+    """Parse text that may contain nested formatting markers.
+
+    This is a helper for recursive parsing of nested markdown.
+    """
+    # Split by formatting markers (same regex as in parse_inline_formatting)
+    parts = re.split(r'(\*\*(?:[^*]|\*(?!\*))+\*\*|\*(?:[^*]|\*\*[^*]*\*\*)+\*|`[^`]+`|\[[^\]]*\]\([^)]*\))', text)
+
+    for part in parts:
+        if not part:
+            continue
+
+        # Bold text (**text**) - nested inside current context
+        if part.startswith('**') and part.endswith('**'):
+            inner_text = part[2:-2]
+            # Further nesting - parse inner content
+            _parse_with_formatting(inner_text, paragraph, bold=True, italic=italic)
+        # Italic text (*text*) - nested inside current context
+        elif part.startswith('*') and part.endswith('*') and not part.startswith('**'):
+            inner_text = part[1:-1]
+            _parse_with_formatting(inner_text, paragraph, bold=bold, italic=True)
+        # Inline code (`code`)
+        elif part.startswith('`') and part.endswith('`'):
+            code_text = part[1:-1]
+            run = paragraph.add_run(code_text)
+            run.font.name = 'Courier New'
+            if bold:
+                run.bold = True
+            if italic:
+                run.italic = True
+        # Links [text](url)
+        elif part.startswith('[') and '](' in part and part.endswith(')'):
+            link_match = re.match(r'\[(.*?)]\((.*?)\)', part)
+            if link_match:
+                link_text, url = link_match.groups()
+                add_hyperlink(paragraph, link_text, url)
+        else:
+            # Plain text with inherited formatting
+            run = paragraph.add_run(part)
+            if bold:
+                run.bold = True
+            if italic:
+                run.italic = True
 
 
 def handle_escapes(text):

@@ -51,6 +51,11 @@ Dynamic email tools (optional):
 
 - Short explanation: Dynamic email templates are reusable, parameterized HTML email layouts defined in `config/email_templates.yaml`. At startup the server registers each template as an individual MCP tool and automatically adds standard fields (subject, to, cc, bcc, priority, language). Template-specific arguments (for example `first_name` or `promo_code`) are exposed as tool parameters so AI assistants can call a single, strongly-typed tool to produce consistent, production-ready emails without composing full HTML bodies.
 
+Dynamic DOCX template tools (optional):
+- If `config/docx_templates.yaml` exists, each entry is registered as its own document generation tool at startup. See below for details.
+
+- Short explanation: Dynamic DOCX templates are reusable Word documents with placeholders (`{{placeholder_name}}`) defined in `config/docx_templates.yaml`. At startup, the server registers each template as an individual MCP tool. Template-specific arguments are exposed as tool parameters. Placeholder values support markdown formatting (**bold**, *italic*, `code`, [links](url)) which is converted to proper Word formatting.
+
 Outputs:
 - LOCAL: files saved to `output/` and reported back
 - S3/GCS/AZURE/MINIO: a time-limited download link is returned (TTL via `SIGNED_URL_EXPIRES_IN`)
@@ -122,3 +127,71 @@ templates:
 ```
 - Subject, to, cc, bcc, priority, and language are handled automatically and added to each template tool.
 - Tip: use `{{variable}}` for escaped text; `{{{variable}}}` for raw HTML
+
+### Dynamic DOCX Templates
+
+Dynamic DOCX templates allow you to create reusable Word document templates with placeholders.
+
+Setup:
+- Create `config/docx_templates.yaml` and reference DOCX template files by filename only (no paths).
+- Place your `.docx` template files in `custom_templates/` directory.
+- Use `{{placeholder_name}}` syntax in your Word document for placeholders.
+
+Example YAML configuration (`config/docx_templates.yaml`):
+```yaml
+templates:
+  - name: formal_letter
+    description: Generate a formal business letter
+    docx_path: letter_template.docx  # must exist in custom_templates/ or default_templates/
+    annotations:
+      title: Formal Letter Generator
+    args:
+      - name: recipient_name
+        type: string
+        description: Full name of the recipient
+        required: true
+      - name: recipient_address
+        type: string
+        description: Recipient's address
+        required: true
+      - name: subject
+        type: string
+        description: Letter subject
+        required: true
+      - name: body
+        type: string
+        description: "Letter body (supports markdown: **bold**, *italic*, [links](url))"
+        required: true
+      - name: sender_name
+        type: string
+        description: Sender's name
+        required: true
+```
+
+Example DOCX template content (create in Word and save as `custom_templates/letter_template.docx`):
+```
+                                    {{date}}
+
+{{recipient_name}}
+{{recipient_address}}
+
+Subject: {{subject}}
+
+{{salutation}}
+
+{{body}}
+
+{{closing}}
+
+{{sender_name}}
+{{sender_title}}
+```
+
+Markdown formatting in placeholder values:
+- `**bold text**` → Bold text
+- `*italic text*` → Italic text
+- `` `code` `` → Monospace font
+- `[link text](url)` → Clickable hyperlink
+
+The original font size and name from the placeholder location in the template are preserved for the replacement text.
+
