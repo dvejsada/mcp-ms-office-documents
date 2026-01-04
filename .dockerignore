@@ -6,6 +6,9 @@ custom_templates/
 output/
 config/
 
+# Exclude tests - not needed in production
+tests/
+
 # =============================================================================
 # PYTHON CACHE AND BUILD FILES
 # =============================================================================

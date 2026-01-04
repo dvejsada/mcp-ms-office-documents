@@ -9,7 +9,7 @@ ARG PYTHON_VERSION=3.12.8
 # =============================================================================
 # Stage 1: Builder - Install dependencies
 # =============================================================================
-FROM python:${PYTHON_VERSION}-slim AS builder
+FROM python:${PYTHON_VERSION}-alpine AS builder
 
 # Prevents Python from writing pyc files.
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -31,7 +31,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # =============================================================================
 # Stage 2: Runtime - Final lean image
 # =============================================================================
-FROM python:${PYTHON_VERSION}-slim AS runtime
+FROM python:${PYTHON_VERSION}-alpine AS runtime
 
 # Prevents Python from writing pyc files.
 ENV PYTHONDONTWRITEBYTECODE=1
