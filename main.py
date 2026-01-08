@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field
 from typing import Annotated, List, Dict, Optional, Literal
 from xlsx_tools import markdown_to_excel
 from docx_tools import markdown_to_word
+from docx_tools.dynamic_docx_tools import register_docx_template_tools_from_yaml
 from pptx_tools import create_presentation
 from email_tools import create_eml
 from email_tools.dynamic_email_tools import register_email_template_tools_from_yaml
@@ -38,6 +39,29 @@ if _primary_yaml:
 else:
     logger.info(
         "[dynamic-email] No dynamic email templates file found at /app/config/email_templates.yaml or config/email_templates.yaml - skipping"
+    )
+
+# Look for dynamic DOCX templates in production and local locations.
+# Production (container): /app/config/docx_templates.yaml
+# Local development: <project_root>/config/docx_templates.yaml
+APP_DOCX_CONFIG_PATH = Path("/app/config") / "docx_templates.yaml"
+LOCAL_DOCX_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "docx_templates.yaml"
+
+_docx_yaml = None
+for candidate in (APP_DOCX_CONFIG_PATH, LOCAL_DOCX_CONFIG_PATH):
+    if candidate.exists():
+        _docx_yaml = candidate
+        logger.info("[dynamic-docx] Found DOCX templates file: %s", candidate)
+        break
+
+if _docx_yaml:
+    try:
+        register_docx_template_tools_from_yaml(mcp, _docx_yaml)
+    except Exception as e:
+        logger.exception("[dynamic-docx] Failed to register DOCX templates from %s: %s", _docx_yaml, e)
+else:
+    logger.info(
+        "[dynamic-docx] No dynamic DOCX templates file found at /app/config/docx_templates.yaml or config/docx_templates.yaml - skipping"
     )
 
 class PowerPointSlide(BaseModel):

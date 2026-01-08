@@ -1,0 +1,128 @@
+# Dynamic DOCX Template Configuration
+#
+# Define custom Word document templates with placeholders that AI can fill in.
+# Each template creates an MCP tool that generates documents from the template.
+#
+# Placeholder syntax in DOCX files:
+#   {{placeholder_name}} - replaced with the value (supports markdown formatting)
+#
+# =============================================================================
+# WORD STYLES USED BY THE SYSTEM
+# =============================================================================
+# When creating custom templates, ensure these styles exist in your document.
+# You can customize their appearance in Word (font, size, color, spacing, etc.)
+# and the system will use your customizations.
+#
+# Heading styles (used for markdown # headings):
+#   - Heading 1    (# text)
+#   - Heading 2    (## text)
+#   - Heading 3    (### text)
+#   - Heading 4    (#### text)
+#   - Heading 5    (##### text)
+#   - Heading 6    (###### text)
+#
+# List styles (used for markdown lists):
+#   - List Bullet      (- item, * item, + item) - top level
+#   - List Bullet 2    (nested bullet, 3 spaces indent)
+#   - List Bullet 3    (deeply nested bullet, 6 spaces indent)
+#   - List Number      (1. item) - top level
+#   - List Number 2    (nested numbered, 3 spaces indent)
+#   - List Number 3    (deeply nested numbered, 6 spaces indent)
+#
+# Other styles:
+#   - Quote            (> blockquote text) - only in base tool
+#   - Table Grid       (for markdown tables) - only in base tool
+#   - Normal           (regular paragraphs)
+#
+# TIP: To customize styles in your template:
+#   1. Open your template in Word
+#   2. Go to Home > Styles
+#   3. Right-click on a style > Modify
+#   4. Customize font, paragraph spacing, colors, etc.
+#   5. Save the template
+#
+# =============================================================================
+# MARKDOWN FORMATTING SUPPORT
+# =============================================================================
+#
+# Inline formatting (works within any text):
+#   **bold text**     -> Bold text
+#   *italic text*     -> Italic text
+#   `code`            -> Monospace font (Courier New)
+#   [link text](url)  -> Clickable hyperlink
+#
+# Block-level markdown (creates new paragraphs):
+#   Headings:
+#     # Heading 1
+#     ## Heading 2
+#     ### Heading 3 (up to ###### Heading 6)
+#
+#   Numbered lists:
+#     1. First item
+#     2. Second item
+#
+#   Bullet points:
+#     - Item one
+#     - Item two
+#     * Also works with asterisk
+#     + Or plus sign
+#
+#   Nested lists (use 3 spaces for indentation):
+#     - Main item
+#        - Sub item
+#        - Another sub item
+
+
+templates:
+  # Example: Formal Business Letter
+  - name: formal_letter
+    description: |
+      Generate a formal business letter with customizable recipient, subject, body, and sender information.
+      All placeholder values support markdown formatting:
+      - Inline: **bold**, *italic*, `code`, [links](url)
+      - Block-level: headings (#), bullet lists (-, *, +), numbered lists (1., 2.)
+    docx_path: letter_template.docx  # Must be in custom_templates/ directory
+    annotations:
+      title: Formal Letter Generator
+    args:
+      - name: recipient_name
+        type: string
+        description: Full name of the recipient (e.g., "John Smith")
+        required: true
+      - name: recipient_address
+        type: string
+        description: Recipient's full address. Use line breaks for multiple lines.
+        required: true
+      - name: date
+        type: string
+        description: Letter date (e.g., "January 1, 2026")
+        required: false
+        default: ""
+      - name: subject
+        type: string
+        description: Letter subject line
+        required: true
+      - name: salutation
+        type: string
+        description: Opening salutation (e.g., "Dear Mr. Smith")
+        required: true
+      - name: body
+        type: string
+        description: Main body of the letter
+        required: true
+      - name: closing
+        type: string
+        description: Closing phrase (e.g., "Sincerely,")
+        required: false
+        default: "Sincerely,"
+      - name: sender_name
+        type: string
+        description: Sender's full name
+        required: true
+      - name: sender_title
+        type: string
+        description: Sender's job title or position
+        required: false
+        default: ""
+
+

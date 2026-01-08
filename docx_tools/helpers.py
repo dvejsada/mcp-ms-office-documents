@@ -44,14 +44,28 @@ def add_hyperlink(paragraph, text, url, color="0000FF", underline=True):
         rPr.append(c)
 
     new_run.append(rPr)
-    new_run.text = text
+
+    # Create the text element properly
+    text_elem = OxmlElement('w:t')
+    text_elem.text = text
+    # Preserve spaces at start/end
+    text_elem.set(qn('xml:space'), 'preserve')
+    new_run.append(text_elem)
+
     hyperlink.append(new_run)
 
     paragraph._p.append(hyperlink)
 
 
-def parse_inline_formatting(text, paragraph):
-    """Parse inline markdown formatting like **bold**, *italic*, and [links](url)"""
+def parse_inline_formatting(text, paragraph, bold=False, italic=False):
+    """Parse inline markdown formatting like **bold**, *italic*, and [links](url)
+
+    Args:
+        text: The text to parse
+        paragraph: The paragraph to add runs to
+        bold: Whether the current context is bold (for nested formatting)
+        italic: Whether the current context is italic (for nested formatting)
+    """
     # First handle escape characters
     text = handle_escapes(text)
 
@@ -63,39 +77,75 @@ def parse_inline_formatting(text, paragraph):
         if not line_part and line_idx == len(line_parts) - 1:
             continue
 
-        # Split text by formatting markers while preserving the markers
-        parts = re.split(r'(\*\*.*?\*\*|\*.*?\*|`.*?`|\[.*?]\(.*?\))', line_part)
-
-        for part in parts:
-            if not part:
-                continue
-
-            # Bold text (**text**)
-            if part.startswith('**') and part.endswith('**'):
-                bold_text = part[2:-2]
-                paragraph.add_run(bold_text).bold = True
-            # Italic text (*text*)
-            elif part.startswith('*') and part.endswith('*'):
-                italic_text = part[1:-1]
-                paragraph.add_run(italic_text).italic = True
-            # Inline code (`code`)
-            elif part.startswith('`') and part.endswith('`'):
-                code_text = part[1:-1]
-                run = paragraph.add_run(code_text)
-                run.font.name = 'Courier New'
-            # Links [text](url)
-            elif part.startswith('[') and '](' in part and part.endswith(')'):
-                link_match = re.match(r'\[(.*?)]\((.*?)\)', part)
-                if link_match:
-                    link_text, url = link_match.groups()
-                    add_hyperlink(paragraph, link_text, url)
-            else:
-                # Plain text
-                paragraph.add_run(part)
+        _parse_formatting_segment(line_part, paragraph, bold, italic)
 
         # Add line break if this isn't the last part
         if line_idx < len(line_parts) - 1:
             paragraph.add_run().add_break()
+
+
+def _parse_formatting_segment(text, paragraph, bold=False, italic=False):
+    """Parse a single text segment for inline markdown formatting.
+
+    This is the core parsing function used by both parse_inline_formatting
+    (for line-break-aware parsing) and recursive nested formatting.
+
+    Args:
+        text: The text segment to parse (no line breaks expected)
+        paragraph: The paragraph to add runs to
+        bold: Whether the current context is bold
+        italic: Whether the current context is italic
+    """
+    # Split text by formatting markers while preserving the markers
+    # Regex explanation:
+    # - \*\*(?:[^*]|\*(?!\*))+\*\* : bold (**...**) - matches ** followed by any chars except **, ending with **
+    # - \*(?:[^*]|\*\*[^*]*\*\*)+\* : italic (*...*) - matches * followed by any chars or nested **, ending with *
+    # - `[^`]+` : inline code
+    # - \[[^\]]*\]\([^)]*\) : links [text](url)
+    parts = re.split(r'(\*\*(?:[^*]|\*(?!\*))+\*\*|\*(?:[^*]|\*\*[^*]*\*\*)+\*|`[^`]+`|\[[^\]]*\]\([^)]*\))', text)
+
+    for part in parts:
+        if not part:
+            continue
+
+        # Bold text (**text**)
+        if part.startswith('**') and part.endswith('**'):
+            inner_text = part[2:-2]
+            _parse_formatting_segment(inner_text, paragraph, bold=True, italic=italic)
+        # Italic text (*text*)
+        elif part.startswith('*') and part.endswith('*') and not part.startswith('**'):
+            inner_text = part[1:-1]
+            _parse_formatting_segment(inner_text, paragraph, bold=bold, italic=True)
+        # Inline code (`code`)
+        elif part.startswith('`') and part.endswith('`'):
+            code_text = part[1:-1]
+            run = paragraph.add_run(code_text)
+            run.font.name = 'Courier New'
+            if bold:
+                run.bold = True
+            if italic:
+                run.italic = True
+        # Links [text](url)
+        elif part.startswith('[') and '](' in part and part.endswith(')'):
+            link_match = re.match(r'\[(.*?)]\((.*?)\)', part)
+            if link_match:
+                link_text, url = link_match.groups()
+                add_hyperlink(paragraph, link_text, url)
+        else:
+            # Plain text with inherited formatting
+            run = paragraph.add_run(part)
+            if bold:
+                run.bold = True
+            if italic:
+                run.italic = True
+
+
+def _parse_with_formatting(text, paragraph, bold=False, italic=False):
+    """Parse text that may contain nested formatting markers.
+
+    This is a compatibility alias for _parse_formatting_segment.
+    """
+    _parse_formatting_segment(text, paragraph, bold, italic)
 
 
 def handle_escapes(text):
@@ -176,13 +226,54 @@ def add_table_to_doc(table_data, doc):
 
 
 def process_list_items(lines, start_idx, doc, is_ordered=False, level=0):
-    """Process markdown list items with proper Word numbering"""
+    """Process markdown list items with proper Word numbering.
+
+    This function directly adds paragraphs to the document.
+
+    Args:
+        lines: All lines of markdown content
+        start_idx: Starting index in lines
+        doc: The Word document
+        is_ordered: Whether this is an ordered (numbered) list
+        level: Current nesting level
+
+    Returns:
+        Next line index after processing the list
+    """
+    i, _ = process_list_items_returning_elements(
+        lines, start_idx, doc, is_ordered, level, return_elements=False
+    )
+    return i
+
+
+def process_list_items_returning_elements(
+    lines, start_idx, doc, is_ordered=False, level=0, return_elements=True
+):
+    """Process markdown list items and optionally return paragraph elements.
+
+    This is the core list processing function that can either:
+    - Add paragraphs directly to document (return_elements=False)
+    - Return paragraph elements for manual insertion (return_elements=True)
+
+    Args:
+        lines: All lines of markdown content
+        start_idx: Starting index in lines
+        doc: The Word document
+        is_ordered: Whether this is an ordered (numbered) list
+        level: Current nesting level
+        return_elements: If True, remove elements from doc and return them
+
+    Returns:
+        Tuple of (next_index, list_of_paragraph_elements) if return_elements=True
+        Tuple of (next_index, None) if return_elements=False
+    """
     bullet_styles = ['List Bullet', 'List Bullet 2', 'List Bullet 3']
     number_styles = ['List Number', 'List Number 2', 'List Number 3']
 
     style_array = number_styles if is_ordered else bullet_styles
     style = style_array[min(level, len(style_array) - 1)]
 
+    elements = [] if return_elements else None
     i = start_idx
 
     while i < len(lines):
@@ -212,6 +303,10 @@ def process_list_items(lines, start_idx, doc, is_ordered=False, level=0):
         paragraph = doc.add_paragraph(style=style)
         parse_inline_formatting(item_text, paragraph)
 
+        if return_elements:
+            elements.append(paragraph._p)
+            doc._body._body.remove(paragraph._p)
+
         i += 1
 
         # Look ahead for nested items
@@ -231,9 +326,17 @@ def process_list_items(lines, start_idx, doc, is_ordered=False, level=0):
             if next_level > level:
                 # This is a nested item - process the nested list
                 if re.match(r'^\d+\.\s+', next_line):
-                    i = process_list_items(lines, i, doc, True, next_level)
+                    i, nested_elements = process_list_items_returning_elements(
+                        lines, i, doc, True, next_level, return_elements
+                    )
+                    if return_elements and nested_elements:
+                        elements.extend(nested_elements)
                 elif re.match(r'^[-*+]\s+', next_line):
-                    i = process_list_items(lines, i, doc, False, next_level)
+                    i, nested_elements = process_list_items_returning_elements(
+                        lines, i, doc, False, next_level, return_elements
+                    )
+                    if return_elements and nested_elements:
+                        elements.extend(nested_elements)
                 else:
                     # Not a list item, stop processing nested items
                     break
@@ -244,4 +347,85 @@ def process_list_items(lines, start_idx, doc, is_ordered=False, level=0):
                 # Lower level - return to parent
                 break
 
-    return i
+    return i, elements
+
+
+# Regex patterns for block content detection (used by multiple modules)
+ORDERED_LIST_PATTERN = re.compile(r'^\d+\.\s+')
+UNORDERED_LIST_PATTERN = re.compile(r'^[-*+]\s+')
+HEADING_PATTERN = re.compile(r'^(#{1,6})\s+(.+)$')
+
+
+def contains_block_markdown(value: str) -> bool:
+    """Check if the value contains block-level markdown content.
+
+    Block-level content includes:
+    - Ordered lists (1. item)
+    - Unordered lists (- item, * item, + item)
+    - Headings (# heading)
+
+    Args:
+        value: The string to check
+
+    Returns:
+        True if value contains block-level content
+    """
+    lines = value.split('\n')
+    for line in lines:
+        stripped = line.strip()
+        if ORDERED_LIST_PATTERN.match(stripped):
+            return True
+        if UNORDERED_LIST_PATTERN.match(stripped):
+            return True
+        if HEADING_PATTERN.match(stripped):
+            return True
+    return False
+
+
+def process_markdown_block(doc, lines, start_idx, return_element=True):
+    """Process a single markdown block element (heading, list item start, or paragraph).
+
+    Args:
+        doc: The Word document
+        lines: All lines of content
+        start_idx: Current line index
+        return_element: If True, remove element from doc and return it
+
+    Returns:
+        Tuple of (next_index, list_of_elements)
+    """
+    line = lines[start_idx]
+    stripped = line.strip()
+    elements = []
+
+    # Check for heading
+    heading_match = HEADING_PATTERN.match(stripped)
+    if heading_match:
+        level = len(heading_match.group(1))
+        text = heading_match.group(2)
+        heading = doc.add_heading('', level=min(level, 6))
+        parse_inline_formatting(text, heading)
+        if return_element:
+            elements.append(heading._p)
+            doc._body._body.remove(heading._p)
+        return start_idx + 1, elements
+
+    # Check for ordered list
+    if ORDERED_LIST_PATTERN.match(stripped):
+        return process_list_items_returning_elements(
+            lines, start_idx, doc, is_ordered=True, level=0, return_elements=return_element
+        )
+
+    # Check for unordered list
+    if UNORDERED_LIST_PATTERN.match(stripped):
+        return process_list_items_returning_elements(
+            lines, start_idx, doc, is_ordered=False, level=0, return_elements=return_element
+        )
+
+    # Regular paragraph
+    para = doc.add_paragraph()
+    parse_inline_formatting(stripped, para)
+    if return_element:
+        elements.append(para._p)
+        doc._body._body.remove(para._p)
+    return start_idx + 1, elements
