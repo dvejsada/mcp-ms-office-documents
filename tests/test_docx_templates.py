@@ -33,6 +33,9 @@ from docx_tools.dynamic_docx_tools import (
     _replace_placeholders_in_paragraph,
     _replace_placeholders_in_table,
     _replace_placeholders_in_document,
+    _value_contains_block_content,
+    _insert_markdown_content_after_paragraph,
+    _process_list_from_lines,
     find_docx_template_by_name,
     register_docx_template_tools_from_yaml,
 )
@@ -857,6 +860,323 @@ templates:
         if result:
             assert "letter_template.docx" in result
             assert Path(result).exists()
+
+
+# =============================================================================
+# List (Bullet Points and Numbered Lists) Tests
+# =============================================================================
+
+class TestListsInPlaceholders:
+    """Tests for bullet points and numbered lists in placeholder values."""
+
+    def test_value_contains_block_content_detection_unordered(self):
+        """Test detection of unordered list in value."""
+        value = """Some intro text
+- First item
+- Second item
+- Third item"""
+        assert _value_contains_block_content(value) is True
+
+    def test_value_contains_block_content_detection_ordered(self):
+        """Test detection of ordered list in value."""
+        value = """Some intro text
+1. First step
+2. Second step
+3. Third step"""
+        assert _value_contains_block_content(value) is True
+
+    def test_value_contains_block_content_plain_text(self):
+        """Test that plain text is not detected as block content."""
+        value = "This is just plain text without any lists."
+        assert _value_contains_block_content(value) is False
+
+    def test_value_contains_block_content_inline_formatting(self):
+        """Test that inline formatting is not detected as block content."""
+        value = "This has **bold** and *italic* but no lists."
+        assert _value_contains_block_content(value) is False
+
+    def test_simple_unordered_list(self):
+        """Test placeholder with simple unordered list."""
+        doc = Document()
+        para = doc.add_paragraph()
+        para.add_run("{{items}}")
+
+        context = {"items": """- Apple
+- Banana
+- Orange"""}
+
+        _replace_placeholders_in_document(doc, context)
+
+        path = save_document(doc, "list_01_simple_unordered.docx")
+        assert path.exists()
+
+        # Verify list items were created as separate paragraphs
+        doc2 = Document(path)
+        # Should have list paragraphs
+        list_paragraphs = [p for p in doc2.paragraphs if p.text.strip() and
+                          ('Apple' in p.text or 'Banana' in p.text or 'Orange' in p.text)]
+        assert len(list_paragraphs) >= 3
+
+    def test_simple_ordered_list(self):
+        """Test placeholder with simple ordered list."""
+        doc = Document()
+        para = doc.add_paragraph()
+        para.add_run("{{steps}}")
+
+        context = {"steps": """1. First step
+2. Second step
+3. Third step"""}
+
+        _replace_placeholders_in_document(doc, context)
+
+        path = save_document(doc, "list_02_simple_ordered.docx")
+        assert path.exists()
+
+        # Verify list items were created
+        doc2 = Document(path)
+        list_paragraphs = [p for p in doc2.paragraphs if p.text.strip() and
+                          ('First step' in p.text or 'Second step' in p.text or 'Third step' in p.text)]
+        assert len(list_paragraphs) >= 3
+
+    def test_unordered_list_with_formatting(self):
+        """Test unordered list items with markdown formatting."""
+        doc = Document()
+        para = doc.add_paragraph()
+        para.add_run("{{items}}")
+
+        context = {"items": """- **Bold item**
+- *Italic item*
+- Item with `code`
+- Item with [link](https://example.com)"""}
+
+        _replace_placeholders_in_document(doc, context)
+
+        path = save_document(doc, "list_03_unordered_formatted.docx")
+        assert path.exists()
+
+    def test_ordered_list_with_formatting(self):
+        """Test ordered list items with markdown formatting."""
+        doc = Document()
+        para = doc.add_paragraph()
+        para.add_run("{{steps}}")
+
+        context = {"steps": """1. **Important first step**
+2. Do *something* here
+3. Use `function()` to complete"""}
+
+        _replace_placeholders_in_document(doc, context)
+
+        path = save_document(doc, "list_04_ordered_formatted.docx")
+        assert path.exists()
+
+    def test_list_with_preceding_text(self):
+        """Test list with text before it."""
+        doc = Document()
+        para = doc.add_paragraph()
+        para.add_run("{{content}}")
+
+        context = {"content": """Here are the key points:
+- First point
+- Second point
+- Third point"""}
+
+        _replace_placeholders_in_document(doc, context)
+
+        path = save_document(doc, "list_05_with_preceding_text.docx")
+        assert path.exists()
+
+    def test_list_with_following_text(self):
+        """Test list with text after it."""
+        doc = Document()
+        para = doc.add_paragraph()
+        para.add_run("{{content}}")
+
+        context = {"content": """- First item
+- Second item
+- Third item
+
+That's all for now."""}
+
+        _replace_placeholders_in_document(doc, context)
+
+        path = save_document(doc, "list_06_with_following_text.docx")
+        assert path.exists()
+
+    def test_mixed_list_types(self):
+        """Test document with both ordered and unordered lists."""
+        doc = Document()
+        para = doc.add_paragraph()
+        para.add_run("{{content}}")
+
+        context = {"content": """Shopping list:
+- Apples
+- Bananas
+- Oranges
+
+Steps to follow:
+1. Go to store
+2. Buy items
+3. Return home"""}
+
+        _replace_placeholders_in_document(doc, context)
+
+        path = save_document(doc, "list_07_mixed_types.docx")
+        assert path.exists()
+
+    def test_nested_unordered_list(self):
+        """Test nested unordered list items."""
+        doc = Document()
+        para = doc.add_paragraph()
+        para.add_run("{{items}}")
+
+        context = {"items": """- Main item 1
+   - Sub item 1.1
+   - Sub item 1.2
+- Main item 2
+   - Sub item 2.1"""}
+
+        _replace_placeholders_in_document(doc, context)
+
+        path = save_document(doc, "list_08_nested_unordered.docx")
+        assert path.exists()
+
+    def test_nested_ordered_list(self):
+        """Test nested ordered list items."""
+        doc = Document()
+        para = doc.add_paragraph()
+        para.add_run("{{steps}}")
+
+        context = {"steps": """1. First main step
+   1. Sub-step 1.1
+   2. Sub-step 1.2
+2. Second main step
+   1. Sub-step 2.1"""}
+
+        _replace_placeholders_in_document(doc, context)
+
+        path = save_document(doc, "list_09_nested_ordered.docx")
+        assert path.exists()
+
+    def test_list_placeholder_in_context(self):
+        """Test list placeholder when there is text before and after the placeholder."""
+        doc = Document()
+        para = doc.add_paragraph()
+        para.add_run("Before: {{list}} After the list.")
+
+        context = {"list": """- Item A
+- Item B
+- Item C"""}
+
+        _replace_placeholders_in_document(doc, context)
+
+        path = save_document(doc, "list_10_with_context.docx")
+        assert path.exists()
+
+        # Verify "Before:" text is present
+        doc2 = Document(path)
+        full_text = " ".join(p.text for p in doc2.paragraphs)
+        assert "Before:" in full_text
+        assert "After the list." in full_text
+
+    def test_asterisk_list_marker(self):
+        """Test unordered list with asterisk marker (*)."""
+        doc = Document()
+        para = doc.add_paragraph()
+        para.add_run("{{items}}")
+
+        context = {"items": """* Apple
+* Banana
+* Orange"""}
+
+        _replace_placeholders_in_document(doc, context)
+
+        path = save_document(doc, "list_11_asterisk_marker.docx")
+        assert path.exists()
+
+    def test_plus_list_marker(self):
+        """Test unordered list with plus marker (+)."""
+        doc = Document()
+        para = doc.add_paragraph()
+        para.add_run("{{items}}")
+
+        context = {"items": """+ Apple
++ Banana
++ Orange"""}
+
+        _replace_placeholders_in_document(doc, context)
+
+        path = save_document(doc, "list_12_plus_marker.docx")
+        assert path.exists()
+
+    def test_list_in_table_cell_fallback(self):
+        """Test that lists in table cells fallback to inline text.
+
+        Lists are not supported in table cells, so the value should be
+        inserted as plain formatted text.
+        """
+        doc = Document()
+        table = doc.add_table(rows=2, cols=1)
+        table.style = 'Table Grid'
+        table.cell(0, 0).text = "Items"
+        table.cell(1, 0).text = "{{items}}"
+
+        context = {"items": """- Item 1
+- Item 2
+- Item 3"""}
+
+        # This should work without error, lists just won't be formatted as lists
+        _replace_placeholders_in_document(doc, context)
+
+        path = save_document(doc, "list_13_table_fallback.docx")
+        assert path.exists()
+
+    def test_complex_document_with_lists(self):
+        """Test a complex document with multiple lists and formatting."""
+        doc = Document()
+
+        # Add heading
+        doc.add_heading("Project Overview", level=1)
+
+        # Add paragraph with list placeholder
+        para = doc.add_paragraph()
+        para.add_run("Key features: {{features}}")
+
+        # Add another paragraph
+        doc.add_paragraph().add_run("Implementation steps: {{steps}}")
+
+        context = {
+            "features": """
+- **Performance** - Optimized for speed
+- **Security** - Enterprise-grade protection
+- **Scalability** - Grows with your needs""",
+            "steps": """
+1. Install the package
+2. Configure settings
+3. Run the setup wizard
+4. Deploy to production"""
+        }
+
+        _replace_placeholders_in_document(doc, context)
+
+        path = save_document(doc, "list_14_complex_document.docx")
+        assert path.exists()
+
+    def test_list_with_empty_lines(self):
+        """Test list with empty lines between items."""
+        doc = Document()
+        para = doc.add_paragraph()
+        para.add_run("{{items}}")
+
+        context = {"items": """- First item
+
+- Second item
+
+- Third item"""}
+
+        _replace_placeholders_in_document(doc, context)
+
+        path = save_document(doc, "list_15_with_empty_lines.docx")
+        assert path.exists()
 
 
 # =============================================================================

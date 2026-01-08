@@ -28,7 +28,6 @@ templates:
 """
 from __future__ import annotations
 
-import copy
 import io
 import re
 import logging
@@ -62,6 +61,198 @@ TYPE_MAP = {
 # Regex to find Mustache-style placeholders: {{name}} or {{{name}}}
 PLACEHOLDER_PATTERN = re.compile(r'\{\{\{?([a-zA-Z_][a-zA-Z0-9_]*)\}?\}\}')
 
+# Regex patterns for list detection
+ORDERED_LIST_PATTERN = re.compile(r'^\d+\.\s+')
+UNORDERED_LIST_PATTERN = re.compile(r'^[-*+]\s+')
+
+
+def _value_contains_block_content(value: str) -> bool:
+    """Check if the value contains block-level markdown content (lists, multiple paragraphs).
+
+    Args:
+        value: The string to check
+
+    Returns:
+        True if value contains block-level content that requires special handling
+    """
+    lines = value.split('\n')
+    for line in lines:
+        stripped = line.strip()
+        if ORDERED_LIST_PATTERN.match(stripped) or UNORDERED_LIST_PATTERN.match(stripped):
+            return True
+    return False
+
+
+def _insert_markdown_content_after_paragraph(
+    doc: DocxDocument,
+    paragraph: Paragraph,
+    content: str
+) -> None:
+    """Insert markdown content (including lists) after a paragraph.
+
+    This function processes block-level markdown content including:
+    - Regular paragraphs with inline formatting
+    - Ordered lists (1. item)
+    - Unordered lists (- item, * item, + item)
+
+    Args:
+        doc: The Word document
+        paragraph: The paragraph after which to insert content
+        content: The markdown content to insert
+    """
+    lines = content.split('\n')
+    i = 0
+
+    # Find the paragraph's position in the document body
+    body = doc._body._body
+    p_element = paragraph._p
+    para_idx = list(body).index(p_element)
+
+    # Track how many elements we've inserted
+    inserted_count = 0
+
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+
+        if not stripped:
+            i += 1
+            continue
+
+        # Check for ordered list
+        if ORDERED_LIST_PATTERN.match(stripped):
+            # Process ordered list items
+            i, new_elements = _process_list_from_lines(
+                lines, i, doc, is_ordered=True
+            )
+            for elem in new_elements:
+                body.insert(para_idx + 1 + inserted_count, elem)
+                inserted_count += 1
+            continue
+
+        # Check for unordered list
+        if UNORDERED_LIST_PATTERN.match(stripped):
+            # Process unordered list items
+            i, new_elements = _process_list_from_lines(
+                lines, i, doc, is_ordered=False
+            )
+            for elem in new_elements:
+                body.insert(para_idx + 1 + inserted_count, elem)
+                inserted_count += 1
+            continue
+
+        # Regular paragraph
+        new_para = doc.add_paragraph()
+        parse_inline_formatting(stripped, new_para)
+        # Move the new paragraph to the correct position
+        body.remove(new_para._p)
+        body.insert(para_idx + 1 + inserted_count, new_para._p)
+        inserted_count += 1
+        i += 1
+
+
+def _process_list_from_lines(
+    lines: list,
+    start_idx: int,
+    doc: DocxDocument,
+    is_ordered: bool = False,
+    level: int = 0
+) -> tuple:
+    """Process markdown list items from lines and return paragraph elements.
+
+    Args:
+        lines: All lines of the content
+        start_idx: Starting index in lines
+        doc: The Word document
+        is_ordered: Whether this is an ordered (numbered) list
+        level: Current nesting level
+
+    Returns:
+        Tuple of (next_index, list_of_paragraph_elements)
+    """
+    bullet_styles = ['List Bullet', 'List Bullet 2', 'List Bullet 3']
+    number_styles = ['List Number', 'List Number 2', 'List Number 3']
+
+    style_array = number_styles if is_ordered else bullet_styles
+    style = style_array[min(level, len(style_array) - 1)]
+
+    elements = []
+    i = start_idx
+
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+
+        if not stripped:
+            i += 1
+            continue
+
+        # Determine indentation level from original line
+        original_line = lines[i]
+        indent = len(original_line) - len(original_line.lstrip())
+        current_level = indent // 3  # Use 3 spaces per level
+
+        # If indentation doesn't match our expected level, this item doesn't belong to this list
+        if current_level != level:
+            break
+
+        # Check if this is a list item at our current level
+        if is_ordered:
+            list_match = re.match(r'^\d+\.\s+(.+)', stripped)
+        else:
+            list_match = re.match(r'^[-*+]\s+(.+)', stripped)
+
+        if not list_match:
+            break
+
+        item_text = list_match.group(1)
+
+        # Create paragraph with list style
+        paragraph = doc.add_paragraph(style=style)
+        parse_inline_formatting(item_text, paragraph)
+        elements.append(paragraph._p)
+        # Remove from document body (we'll insert at correct position later)
+        doc._body._body.remove(paragraph._p)
+
+        i += 1
+
+        # Look ahead for nested items
+        while i < len(lines):
+            if i >= len(lines):
+                break
+
+            next_line = lines[i].strip()
+            if not next_line:
+                i += 1
+                continue
+
+            next_original = lines[i]
+            next_indent = len(next_original) - len(next_original.lstrip())
+            next_level = next_indent // 3
+
+            if next_level > level:
+                # This is a nested item - process the nested list
+                if re.match(r'^\d+\.\s+', next_line):
+                    i, nested_elements = _process_list_from_lines(
+                        lines, i, doc, is_ordered=True, level=next_level
+                    )
+                    elements.extend(nested_elements)
+                elif re.match(r'^[-*+]\s+', next_line):
+                    i, nested_elements = _process_list_from_lines(
+                        lines, i, doc, is_ordered=False, level=next_level
+                    )
+                    elements.extend(nested_elements)
+                else:
+                    break
+            elif next_level == level:
+                # Same level item - continue in outer while loop
+                break
+            else:
+                # Lower level - return to parent
+                break
+
+    return i, elements
+
 
 def find_docx_template_by_name(filename: str) -> Optional[str]:
     """Find a specific DOCX template by filename in custom/default template directories.
@@ -76,16 +267,25 @@ def find_docx_template_by_name(filename: str) -> Optional[str]:
     return str(found) if found else None
 
 
-def _replace_placeholder_in_paragraph(paragraph: Paragraph, placeholder: str, value: str) -> bool:
+def _replace_placeholder_in_paragraph(
+    paragraph: Paragraph,
+    placeholder: str,
+    value: str,
+    doc: DocxDocument = None
+) -> bool:
     """Replace a placeholder in a paragraph with markdown-formatted text.
 
     This function handles the case where a placeholder might be split across multiple runs
     (which Word often does when editing documents).
 
+    For block-level content (lists), the content is inserted as new paragraphs after
+    the current paragraph.
+
     Args:
         paragraph: The paragraph to search and modify
         placeholder: The placeholder text including braces (e.g., '{{name}}')
         value: The replacement value (supports markdown formatting)
+        doc: The Word document (required for block-level content like lists)
 
     Returns:
         True if replacement was made, False otherwise
@@ -138,6 +338,9 @@ def _replace_placeholder_in_paragraph(paragraph: Paragraph, placeholder: str, va
     text_before = combined_text[:placeholder_start]
     text_after = combined_text[placeholder_end:]
 
+    # Check if the value contains block-level content (lists)
+    has_block_content = _value_contains_block_content(value)
+
     # Clear all existing runs
     p_element = paragraph._p
     for run in runs:
@@ -147,29 +350,48 @@ def _replace_placeholder_in_paragraph(paragraph: Paragraph, placeholder: str, va
     if text_before:
         run = paragraph.add_run(text_before)
 
-    # Parse and add the replacement value with markdown formatting
-    parse_inline_formatting(value, paragraph)
+    if has_block_content and doc is not None:
+        # For block content, we need to insert as separate paragraphs
+        # First, handle any text_after by adding it later
+        if text_after:
+            # We'll need to add text_after to the last inserted paragraph
+            pass
 
-    # Apply font formatting to newly added runs (from replacement)
-    if font_name or font_size:
-        # Get runs added after text_before
-        new_runs = list(paragraph.runs)
-        start_idx = 1 if text_before else 0
-        for run in new_runs[start_idx:]:
-            if font_name and not run.font.name:
-                run.font.name = font_name
-            if font_size and not run.font.size:
-                run.font.size = font_size
+        # Insert block content after this paragraph
+        _insert_markdown_content_after_paragraph(doc, paragraph, value)
 
-    # Add text after placeholder
-    if text_after:
-        paragraph.add_run(text_after)
+        # If there's text after, add it as a run to this paragraph
+        if text_after:
+            paragraph.add_run(text_after)
+    else:
+        # Simple inline replacement
+        # Parse and add the replacement value with markdown formatting
+        parse_inline_formatting(value, paragraph)
+
+        # Apply font formatting to newly added runs (from replacement)
+        if font_name or font_size:
+            # Get runs added after text_before
+            new_runs = list(paragraph.runs)
+            start_idx = 1 if text_before else 0
+            for run in new_runs[start_idx:]:
+                if font_name and not run.font.name:
+                    run.font.name = font_name
+                if font_size and not run.font.size:
+                    run.font.size = font_size
+
+        # Add text after placeholder
+        if text_after:
+            paragraph.add_run(text_after)
 
 
     return True
 
 
-def _replace_placeholders_in_paragraph(paragraph: Paragraph, context: Dict[str, str]) -> None:
+def _replace_placeholders_in_paragraph(
+    paragraph: Paragraph,
+    context: Dict[str, str],
+    doc: DocxDocument = None
+) -> None:
     """Replace all placeholders in a paragraph with their values.
 
     This function iteratively replaces placeholders one at a time, re-scanning
@@ -178,6 +400,7 @@ def _replace_placeholders_in_paragraph(paragraph: Paragraph, context: Dict[str, 
     Args:
         paragraph: The paragraph to process
         context: Dictionary mapping placeholder names to their values
+        doc: The Word document (required for block-level content like lists)
     """
     # Keep replacing until no more placeholders are found
     max_iterations = 100  # Safety limit to prevent infinite loops
@@ -208,7 +431,7 @@ def _replace_placeholders_in_paragraph(paragraph: Paragraph, context: Dict[str, 
             # Try triple brace first, then double brace
             for placeholder in [f'{{{{{{{placeholder_name}}}}}}}', f'{{{{{placeholder_name}}}}}']:
                 if placeholder in paragraph.text:
-                    if _replace_placeholder_in_paragraph(paragraph, placeholder, value):
+                    if _replace_placeholder_in_paragraph(paragraph, placeholder, value, doc):
                         replaced = True
                         break
 
@@ -220,17 +443,25 @@ def _replace_placeholders_in_paragraph(paragraph: Paragraph, context: Dict[str, 
             break
 
 
-def _replace_placeholders_in_table(table: Table, context: Dict[str, str]) -> None:
+def _replace_placeholders_in_table(
+    table: Table,
+    context: Dict[str, str],
+    doc: DocxDocument = None
+) -> None:
     """Replace all placeholders in a table.
+
+    Note: Block-level content (lists) is not supported in table cells.
 
     Args:
         table: The table to process
         context: Dictionary mapping placeholder names to their values
+        doc: The Word document (not used for tables, as block content not supported)
     """
     for row in table.rows:
         for cell in row.cells:
             for paragraph in cell.paragraphs:
-                _replace_placeholders_in_paragraph(paragraph, context)
+                # Note: We don't pass doc to avoid inserting lists in table cells
+                _replace_placeholders_in_paragraph(paragraph, context, doc=None)
 
 
 def _replace_placeholders_in_document(doc: DocxDocument, context: Dict[str, str]) -> None:
@@ -247,27 +478,29 @@ def _replace_placeholders_in_document(doc: DocxDocument, context: Dict[str, str]
     """
     # Process main body paragraphs
     for paragraph in doc.paragraphs:
-        _replace_placeholders_in_paragraph(paragraph, context)
+        _replace_placeholders_in_paragraph(paragraph, context, doc)
 
     # Process tables
     for table in doc.tables:
-        _replace_placeholders_in_table(table, context)
+        _replace_placeholders_in_table(table, context, doc)
 
     # Process headers and footers
     for section in doc.sections:
         # Header
         if section.header:
             for paragraph in section.header.paragraphs:
-                _replace_placeholders_in_paragraph(paragraph, context)
+                # Headers/footers: don't support block content
+                _replace_placeholders_in_paragraph(paragraph, context, doc=None)
             for table in section.header.tables:
-                _replace_placeholders_in_table(table, context)
+                _replace_placeholders_in_table(table, context, doc=None)
 
         # Footer
         if section.footer:
             for paragraph in section.footer.paragraphs:
-                _replace_placeholders_in_paragraph(paragraph, context)
+                # Headers/footers: don't support block content
+                _replace_placeholders_in_paragraph(paragraph, context, doc=None)
             for table in section.footer.tables:
-                _replace_placeholders_in_table(table, context)
+                _replace_placeholders_in_table(table, context, doc=None)
 
 
 def register_docx_template_tools_from_yaml(mcp: FastMCP, yaml_path: Path) -> None:
