@@ -85,7 +85,7 @@ templates:
     args:
       - name: recipient_name
         type: string
-        description: Full name of the recipient (e.g., "John Smith")
+        description: Full name of the recipient (e.g., "John Smith"), bold
         required: true
       - name: recipient_address
         type: string
@@ -98,11 +98,11 @@ templates:
         default: ""
       - name: subject
         type: string
-        description: Letter subject line
+        description: Letter subject line bold formatted
         required: true
       - name: salutation
         type: string
-        description: Opening salutation (e.g., "Dear Mr. Smith,")
+        description: Opening salutation (e.g., "Dear Mr. Smith")
         required: true
       - name: body
         type: string
@@ -122,7 +122,7 @@ templates:
         default: "Sincerely,"
       - name: sender_name
         type: string
-        description: Sender's full name
+        description: Sender's full name bold fomatted
         required: true
       - name: sender_title
         type: string
