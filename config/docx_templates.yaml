@@ -130,47 +130,4 @@ templates:
         required: false
         default: ""
 
-  # Example: Meeting Minutes Template
-  # - name: meeting_minutes
-  #   description: Generate meeting minutes document with agenda, notes, and action items
-  #   docx_path: meeting_minutes_template.docx
-  #   annotations:
-  #     title: Meeting Minutes Generator
-  #   args:
-  #     - name: meeting_title
-  #       type: string
-  #       description: Title of the meeting
-  #       required: true
-  #     - name: meeting_date
-  #       type: string
-  #       description: Date and time of the meeting
-  #       required: true
-  #     - name: attendees
-  #       type: string
-  #       description: |
-  #         List of attendees. Can be formatted as bullet points:
-  #         - John Doe (Chair)
-  #         - Jane Smith
-  #         - Bob Johnson
-  #       required: true
-  #     - name: agenda
-  #       type: string
-  #       description: |
-  #         Meeting agenda items. Use numbered list for clarity:
-  #         1. Opening remarks
-  #         2. Review of previous minutes
-  #         3. Main discussion topics
-  #       required: true
-  #     - name: notes
-  #       type: string
-  #       description: Detailed meeting notes (supports full markdown formatting)
-  #       required: true
-  #     - name: action_items
-  #       type: string
-  #       description: |
-  #         Action items with assignees. Example:
-  #         - [ ] **John**: Complete the report by Friday
-  #         - [ ] **Jane**: Schedule follow-up meeting
-  #       required: false
-  #       default: ""
 
