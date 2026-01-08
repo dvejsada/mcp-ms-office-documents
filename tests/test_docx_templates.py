@@ -33,11 +33,13 @@ from docx_tools.dynamic_docx_tools import (
     _replace_placeholders_in_paragraph,
     _replace_placeholders_in_table,
     _replace_placeholders_in_document,
-    _value_contains_block_content,
     _insert_markdown_content_after_paragraph,
-    _process_list_from_lines,
     find_docx_template_by_name,
     register_docx_template_tools_from_yaml,
+)
+from docx_tools.helpers import (
+    contains_block_markdown,
+    process_markdown_block,
 )
 
 # Output directory for test files
@@ -875,7 +877,7 @@ class TestListsInPlaceholders:
 - First item
 - Second item
 - Third item"""
-        assert _value_contains_block_content(value) is True
+        assert contains_block_markdown(value) is True
 
     def test_value_contains_block_content_detection_ordered(self):
         """Test detection of ordered list in value."""
@@ -883,17 +885,24 @@ class TestListsInPlaceholders:
 1. First step
 2. Second step
 3. Third step"""
-        assert _value_contains_block_content(value) is True
+        assert contains_block_markdown(value) is True
 
     def test_value_contains_block_content_plain_text(self):
         """Test that plain text is not detected as block content."""
         value = "This is just plain text without any lists."
-        assert _value_contains_block_content(value) is False
+        assert contains_block_markdown(value) is False
 
     def test_value_contains_block_content_inline_formatting(self):
         """Test that inline formatting is not detected as block content."""
         value = "This has **bold** and *italic* but no lists."
-        assert _value_contains_block_content(value) is False
+        assert contains_block_markdown(value) is False
+
+    def test_value_contains_block_content_heading(self):
+        """Test detection of heading in value."""
+        value = """# Main Heading
+Some text here
+## Sub heading"""
+        assert contains_block_markdown(value) is True
 
     def test_simple_unordered_list(self):
         """Test placeholder with simple unordered list."""
@@ -1176,6 +1185,134 @@ Steps to follow:
         _replace_placeholders_in_document(doc, context)
 
         path = save_document(doc, "list_15_with_empty_lines.docx")
+        assert path.exists()
+
+
+# =============================================================================
+# Heading Tests in Custom Templates
+# =============================================================================
+
+class TestHeadingsInPlaceholders:
+    """Tests for markdown headings in placeholder values."""
+
+    def test_simple_heading(self):
+        """Test placeholder with a simple heading."""
+        doc = Document()
+        para = doc.add_paragraph()
+        para.add_run("{{content}}")
+
+        context = {"content": """# Main Title
+This is some body text."""}
+
+        _replace_placeholders_in_document(doc, context)
+
+        path = save_document(doc, "heading_01_simple.docx")
+        assert path.exists()
+
+        # Verify heading was created
+        doc2 = Document(str(path))
+        # Check that heading style was applied
+        heading_paragraphs = [p for p in doc2.paragraphs if p.style.name.startswith('Heading')]
+        assert len(heading_paragraphs) >= 1
+
+    def test_multiple_heading_levels(self):
+        """Test placeholder with multiple heading levels."""
+        doc = Document()
+        para = doc.add_paragraph()
+        para.add_run("{{content}}")
+
+        context = {"content": """# Heading 1
+Introduction text.
+
+## Heading 2
+More details here.
+
+### Heading 3
+Even more specific."""}
+
+        _replace_placeholders_in_document(doc, context)
+
+        path = save_document(doc, "heading_02_multiple_levels.docx")
+        assert path.exists()
+
+    def test_heading_with_formatting(self):
+        """Test heading with inline markdown formatting."""
+        doc = Document()
+        para = doc.add_paragraph()
+        para.add_run("{{content}}")
+
+        context = {"content": """# **Bold** and *italic* heading
+Regular paragraph text."""}
+
+        _replace_placeholders_in_document(doc, context)
+
+        path = save_document(doc, "heading_03_with_formatting.docx")
+        assert path.exists()
+
+    def test_heading_with_lists(self):
+        """Test heading followed by lists."""
+        doc = Document()
+        para = doc.add_paragraph()
+        para.add_run("{{content}}")
+
+        context = {"content": """# Shopping List
+- Apples
+- Bananas
+- Oranges
+
+## Steps
+1. Go to store
+2. Buy items
+3. Return home"""}
+
+        _replace_placeholders_in_document(doc, context)
+
+        path = save_document(doc, "heading_04_with_lists.docx")
+        assert path.exists()
+
+    def test_h1_to_h6_headings(self):
+        """Test all heading levels from H1 to H6."""
+        doc = Document()
+        para = doc.add_paragraph()
+        para.add_run("{{content}}")
+
+        context = {"content": """# Heading 1
+## Heading 2
+### Heading 3
+#### Heading 4
+##### Heading 5
+###### Heading 6"""}
+
+        _replace_placeholders_in_document(doc, context)
+
+        path = save_document(doc, "heading_05_all_levels.docx")
+        assert path.exists()
+
+    def test_heading_in_complex_document(self):
+        """Test headings in a complex document structure."""
+        doc = Document()
+        doc.add_heading("Document Title", level=0)
+        para = doc.add_paragraph()
+        para.add_run("{{sections}}")
+        doc.add_paragraph("Footer text")
+
+        context = {"sections": """# Introduction
+This document covers important topics.
+
+## Background
+Some background information.
+
+## Main Points
+- Point one
+- Point two
+- Point three
+
+## Conclusion
+Final thoughts here."""}
+
+        _replace_placeholders_in_document(doc, context)
+
+        path = save_document(doc, "heading_06_complex_document.docx")
         assert path.exists()
 
 

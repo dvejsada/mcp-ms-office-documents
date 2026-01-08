@@ -43,7 +43,14 @@ from fastmcp import FastMCP
 
 from upload_tools import upload_file
 from template_utils import find_file_in_template_dirs
-from .helpers import parse_inline_formatting
+from .helpers import (
+    parse_inline_formatting,
+    contains_block_markdown,
+    process_markdown_block,
+    ORDERED_LIST_PATTERN,
+    UNORDERED_LIST_PATTERN,
+    HEADING_PATTERN,
+)
 
 __all__ = ["register_docx_template_tools_from_yaml"]
 
@@ -61,26 +68,6 @@ TYPE_MAP = {
 # Regex to find Mustache-style placeholders: {{name}} or {{{name}}}
 PLACEHOLDER_PATTERN = re.compile(r'\{\{\{?([a-zA-Z_][a-zA-Z0-9_]*)\}?\}\}')
 
-# Regex patterns for list detection
-ORDERED_LIST_PATTERN = re.compile(r'^\d+\.\s+')
-UNORDERED_LIST_PATTERN = re.compile(r'^[-*+]\s+')
-
-
-def _value_contains_block_content(value: str) -> bool:
-    """Check if the value contains block-level markdown content (lists, multiple paragraphs).
-
-    Args:
-        value: The string to check
-
-    Returns:
-        True if value contains block-level content that requires special handling
-    """
-    lines = value.split('\n')
-    for line in lines:
-        stripped = line.strip()
-        if ORDERED_LIST_PATTERN.match(stripped) or UNORDERED_LIST_PATTERN.match(stripped):
-            return True
-    return False
 
 
 def _insert_markdown_content_after_paragraph(
@@ -88,9 +75,10 @@ def _insert_markdown_content_after_paragraph(
     paragraph: Paragraph,
     content: str
 ) -> None:
-    """Insert markdown content (including lists) after a paragraph.
+    """Insert markdown content (including lists and headings) after a paragraph.
 
     This function processes block-level markdown content including:
+    - Headings (# heading)
     - Regular paragraphs with inline formatting
     - Ordered lists (1. item)
     - Unordered lists (- item, * item, + item)
@@ -119,139 +107,13 @@ def _insert_markdown_content_after_paragraph(
             i += 1
             continue
 
-        # Check for ordered list
-        if ORDERED_LIST_PATTERN.match(stripped):
-            # Process ordered list items
-            i, new_elements = _process_list_from_lines(
-                lines, i, doc, is_ordered=True
-            )
-            for elem in new_elements:
-                body.insert(para_idx + 1 + inserted_count, elem)
-                inserted_count += 1
-            continue
+        # Use shared helper to process the markdown block
+        i, new_elements = process_markdown_block(doc, lines, i, return_element=True)
 
-        # Check for unordered list
-        if UNORDERED_LIST_PATTERN.match(stripped):
-            # Process unordered list items
-            i, new_elements = _process_list_from_lines(
-                lines, i, doc, is_ordered=False
-            )
-            for elem in new_elements:
-                body.insert(para_idx + 1 + inserted_count, elem)
-                inserted_count += 1
-            continue
-
-        # Regular paragraph
-        new_para = doc.add_paragraph()
-        parse_inline_formatting(stripped, new_para)
-        # Move the new paragraph to the correct position
-        body.remove(new_para._p)
-        body.insert(para_idx + 1 + inserted_count, new_para._p)
-        inserted_count += 1
-        i += 1
-
-
-def _process_list_from_lines(
-    lines: list,
-    start_idx: int,
-    doc: DocxDocument,
-    is_ordered: bool = False,
-    level: int = 0
-) -> tuple:
-    """Process markdown list items from lines and return paragraph elements.
-
-    Args:
-        lines: All lines of the content
-        start_idx: Starting index in lines
-        doc: The Word document
-        is_ordered: Whether this is an ordered (numbered) list
-        level: Current nesting level
-
-    Returns:
-        Tuple of (next_index, list_of_paragraph_elements)
-    """
-    bullet_styles = ['List Bullet', 'List Bullet 2', 'List Bullet 3']
-    number_styles = ['List Number', 'List Number 2', 'List Number 3']
-
-    style_array = number_styles if is_ordered else bullet_styles
-    style = style_array[min(level, len(style_array) - 1)]
-
-    elements = []
-    i = start_idx
-
-    while i < len(lines):
-        line = lines[i]
-        stripped = line.strip()
-
-        if not stripped:
-            i += 1
-            continue
-
-        # Determine indentation level from original line
-        original_line = lines[i]
-        indent = len(original_line) - len(original_line.lstrip())
-        current_level = indent // 3  # Use 3 spaces per level
-
-        # If indentation doesn't match our expected level, this item doesn't belong to this list
-        if current_level != level:
-            break
-
-        # Check if this is a list item at our current level
-        if is_ordered:
-            list_match = re.match(r'^\d+\.\s+(.+)', stripped)
-        else:
-            list_match = re.match(r'^[-*+]\s+(.+)', stripped)
-
-        if not list_match:
-            break
-
-        item_text = list_match.group(1)
-
-        # Create paragraph with list style
-        paragraph = doc.add_paragraph(style=style)
-        parse_inline_formatting(item_text, paragraph)
-        elements.append(paragraph._p)
-        # Remove from document body (we'll insert at correct position later)
-        doc._body._body.remove(paragraph._p)
-
-        i += 1
-
-        # Look ahead for nested items
-        while i < len(lines):
-            if i >= len(lines):
-                break
-
-            next_line = lines[i].strip()
-            if not next_line:
-                i += 1
-                continue
-
-            next_original = lines[i]
-            next_indent = len(next_original) - len(next_original.lstrip())
-            next_level = next_indent // 3
-
-            if next_level > level:
-                # This is a nested item - process the nested list
-                if re.match(r'^\d+\.\s+', next_line):
-                    i, nested_elements = _process_list_from_lines(
-                        lines, i, doc, is_ordered=True, level=next_level
-                    )
-                    elements.extend(nested_elements)
-                elif re.match(r'^[-*+]\s+', next_line):
-                    i, nested_elements = _process_list_from_lines(
-                        lines, i, doc, is_ordered=False, level=next_level
-                    )
-                    elements.extend(nested_elements)
-                else:
-                    break
-            elif next_level == level:
-                # Same level item - continue in outer while loop
-                break
-            else:
-                # Lower level - return to parent
-                break
-
-    return i, elements
+        # Insert elements at the correct position
+        for elem in new_elements:
+            body.insert(para_idx + 1 + inserted_count, elem)
+            inserted_count += 1
 
 
 def find_docx_template_by_name(filename: str) -> Optional[str]:
@@ -338,8 +200,8 @@ def _replace_placeholder_in_paragraph(
     text_before = combined_text[:placeholder_start]
     text_after = combined_text[placeholder_end:]
 
-    # Check if the value contains block-level content (lists)
-    has_block_content = _value_contains_block_content(value)
+    # Check if the value contains block-level content (lists, headings)
+    has_block_content = contains_block_markdown(value)
 
     # Clear all existing runs
     p_element = paragraph._p

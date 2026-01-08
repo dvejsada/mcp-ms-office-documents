@@ -250,13 +250,54 @@ def add_table_to_doc(table_data, doc):
 
 
 def process_list_items(lines, start_idx, doc, is_ordered=False, level=0):
-    """Process markdown list items with proper Word numbering"""
+    """Process markdown list items with proper Word numbering.
+
+    This function directly adds paragraphs to the document.
+
+    Args:
+        lines: All lines of markdown content
+        start_idx: Starting index in lines
+        doc: The Word document
+        is_ordered: Whether this is an ordered (numbered) list
+        level: Current nesting level
+
+    Returns:
+        Next line index after processing the list
+    """
+    i, _ = process_list_items_returning_elements(
+        lines, start_idx, doc, is_ordered, level, return_elements=False
+    )
+    return i
+
+
+def process_list_items_returning_elements(
+    lines, start_idx, doc, is_ordered=False, level=0, return_elements=True
+):
+    """Process markdown list items and optionally return paragraph elements.
+
+    This is the core list processing function that can either:
+    - Add paragraphs directly to document (return_elements=False)
+    - Return paragraph elements for manual insertion (return_elements=True)
+
+    Args:
+        lines: All lines of markdown content
+        start_idx: Starting index in lines
+        doc: The Word document
+        is_ordered: Whether this is an ordered (numbered) list
+        level: Current nesting level
+        return_elements: If True, remove elements from doc and return them
+
+    Returns:
+        Tuple of (next_index, list_of_paragraph_elements) if return_elements=True
+        Tuple of (next_index, None) if return_elements=False
+    """
     bullet_styles = ['List Bullet', 'List Bullet 2', 'List Bullet 3']
     number_styles = ['List Number', 'List Number 2', 'List Number 3']
 
     style_array = number_styles if is_ordered else bullet_styles
     style = style_array[min(level, len(style_array) - 1)]
 
+    elements = [] if return_elements else None
     i = start_idx
 
     while i < len(lines):
@@ -286,6 +327,10 @@ def process_list_items(lines, start_idx, doc, is_ordered=False, level=0):
         paragraph = doc.add_paragraph(style=style)
         parse_inline_formatting(item_text, paragraph)
 
+        if return_elements:
+            elements.append(paragraph._p)
+            doc._body._body.remove(paragraph._p)
+
         i += 1
 
         # Look ahead for nested items
@@ -305,9 +350,17 @@ def process_list_items(lines, start_idx, doc, is_ordered=False, level=0):
             if next_level > level:
                 # This is a nested item - process the nested list
                 if re.match(r'^\d+\.\s+', next_line):
-                    i = process_list_items(lines, i, doc, True, next_level)
+                    i, nested_elements = process_list_items_returning_elements(
+                        lines, i, doc, True, next_level, return_elements
+                    )
+                    if return_elements and nested_elements:
+                        elements.extend(nested_elements)
                 elif re.match(r'^[-*+]\s+', next_line):
-                    i = process_list_items(lines, i, doc, False, next_level)
+                    i, nested_elements = process_list_items_returning_elements(
+                        lines, i, doc, False, next_level, return_elements
+                    )
+                    if return_elements and nested_elements:
+                        elements.extend(nested_elements)
                 else:
                     # Not a list item, stop processing nested items
                     break
@@ -318,4 +371,85 @@ def process_list_items(lines, start_idx, doc, is_ordered=False, level=0):
                 # Lower level - return to parent
                 break
 
-    return i
+    return i, elements
+
+
+# Regex patterns for block content detection (used by multiple modules)
+ORDERED_LIST_PATTERN = re.compile(r'^\d+\.\s+')
+UNORDERED_LIST_PATTERN = re.compile(r'^[-*+]\s+')
+HEADING_PATTERN = re.compile(r'^(#{1,6})\s+(.+)$')
+
+
+def contains_block_markdown(value: str) -> bool:
+    """Check if the value contains block-level markdown content.
+
+    Block-level content includes:
+    - Ordered lists (1. item)
+    - Unordered lists (- item, * item, + item)
+    - Headings (# heading)
+
+    Args:
+        value: The string to check
+
+    Returns:
+        True if value contains block-level content
+    """
+    lines = value.split('\n')
+    for line in lines:
+        stripped = line.strip()
+        if ORDERED_LIST_PATTERN.match(stripped):
+            return True
+        if UNORDERED_LIST_PATTERN.match(stripped):
+            return True
+        if HEADING_PATTERN.match(stripped):
+            return True
+    return False
+
+
+def process_markdown_block(doc, lines, start_idx, return_element=True):
+    """Process a single markdown block element (heading, list item start, or paragraph).
+
+    Args:
+        doc: The Word document
+        lines: All lines of content
+        start_idx: Current line index
+        return_element: If True, remove element from doc and return it
+
+    Returns:
+        Tuple of (next_index, list_of_elements)
+    """
+    line = lines[start_idx]
+    stripped = line.strip()
+    elements = []
+
+    # Check for heading
+    heading_match = HEADING_PATTERN.match(stripped)
+    if heading_match:
+        level = len(heading_match.group(1))
+        text = heading_match.group(2)
+        heading = doc.add_heading('', level=min(level, 6))
+        parse_inline_formatting(text, heading)
+        if return_element:
+            elements.append(heading._p)
+            doc._body._body.remove(heading._p)
+        return start_idx + 1, elements
+
+    # Check for ordered list
+    if ORDERED_LIST_PATTERN.match(stripped):
+        return process_list_items_returning_elements(
+            lines, start_idx, doc, is_ordered=True, level=0, return_elements=return_element
+        )
+
+    # Check for unordered list
+    if UNORDERED_LIST_PATTERN.match(stripped):
+        return process_list_items_returning_elements(
+            lines, start_idx, doc, is_ordered=False, level=0, return_elements=return_element
+        )
+
+    # Regular paragraph
+    para = doc.add_paragraph()
+    parse_inline_formatting(stripped, para)
+    if return_element:
+        elements.append(para._p)
+        doc._body._body.remove(para._p)
+    return start_idx + 1, elements
