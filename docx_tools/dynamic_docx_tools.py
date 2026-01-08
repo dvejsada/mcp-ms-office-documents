@@ -149,8 +149,6 @@ def _replace_placeholder_in_paragraph(
     Returns:
         True if replacement was made, False otherwise
     """
-    from docx.oxml.ns import qn
-    from docx.oxml import OxmlElement
 
     # First, try to find the placeholder in the full paragraph text
     full_text = paragraph.text

@@ -77,77 +77,45 @@ def parse_inline_formatting(text, paragraph, bold=False, italic=False):
         if not line_part and line_idx == len(line_parts) - 1:
             continue
 
-        # Split text by formatting markers while preserving the markers
-        # Regex explanation:
-        # - \*\*(?:[^*]|\*(?!\*))+\*\* : bold (**...**) - matches ** followed by any chars except **, ending with **
-        # - \*(?:[^*]|\*\*[^*]*\*\*)+\* : italic (*...*) - matches * followed by any chars or nested **, ending with *
-        # - `[^`]+` : inline code
-        # - \[[^\]]*\]\([^)]*\) : links [text](url)
-        parts = re.split(r'(\*\*(?:[^*]|\*(?!\*))+\*\*|\*(?:[^*]|\*\*[^*]*\*\*)+\*|`[^`]+`|\[[^\]]*\]\([^)]*\))', line_part)
-
-        for part in parts:
-            if not part:
-                continue
-
-            # Bold text (**text**)
-            if part.startswith('**') and part.endswith('**'):
-                inner_text = part[2:-2]
-                # Recursively parse inner content for nested formatting (e.g., *italic* inside bold)
-                _parse_with_formatting(inner_text, paragraph, bold=True, italic=italic)
-            # Italic text (*text*)
-            elif part.startswith('*') and part.endswith('*') and not part.startswith('**'):
-                inner_text = part[1:-1]
-                # Recursively parse inner content for nested formatting (e.g., **bold** inside italic)
-                _parse_with_formatting(inner_text, paragraph, bold=bold, italic=True)
-            # Inline code (`code`)
-            elif part.startswith('`') and part.endswith('`'):
-                code_text = part[1:-1]
-                run = paragraph.add_run(code_text)
-                run.font.name = 'Courier New'
-                if bold:
-                    run.bold = True
-                if italic:
-                    run.italic = True
-            # Links [text](url)
-            elif part.startswith('[') and '](' in part and part.endswith(')'):
-                link_match = re.match(r'\[(.*?)]\((.*?)\)', part)
-                if link_match:
-                    link_text, url = link_match.groups()
-                    add_hyperlink(paragraph, link_text, url)
-            else:
-                # Plain text - apply current formatting context
-                run = paragraph.add_run(part)
-                if bold:
-                    run.bold = True
-                if italic:
-                    run.italic = True
+        _parse_formatting_segment(line_part, paragraph, bold, italic)
 
         # Add line break if this isn't the last part
         if line_idx < len(line_parts) - 1:
             paragraph.add_run().add_break()
 
 
-def _parse_with_formatting(text, paragraph, bold=False, italic=False):
-    """Parse text that may contain nested formatting markers.
+def _parse_formatting_segment(text, paragraph, bold=False, italic=False):
+    """Parse a single text segment for inline markdown formatting.
 
-    This is a helper for recursive parsing of nested markdown.
+    This is the core parsing function used by both parse_inline_formatting
+    (for line-break-aware parsing) and recursive nested formatting.
+
+    Args:
+        text: The text segment to parse (no line breaks expected)
+        paragraph: The paragraph to add runs to
+        bold: Whether the current context is bold
+        italic: Whether the current context is italic
     """
-    # Split by formatting markers (same regex as in parse_inline_formatting)
+    # Split text by formatting markers while preserving the markers
+    # Regex explanation:
+    # - \*\*(?:[^*]|\*(?!\*))+\*\* : bold (**...**) - matches ** followed by any chars except **, ending with **
+    # - \*(?:[^*]|\*\*[^*]*\*\*)+\* : italic (*...*) - matches * followed by any chars or nested **, ending with *
+    # - `[^`]+` : inline code
+    # - \[[^\]]*\]\([^)]*\) : links [text](url)
     parts = re.split(r'(\*\*(?:[^*]|\*(?!\*))+\*\*|\*(?:[^*]|\*\*[^*]*\*\*)+\*|`[^`]+`|\[[^\]]*\]\([^)]*\))', text)
 
     for part in parts:
         if not part:
             continue
 
-        # Bold text (**text**) - nested inside current context
+        # Bold text (**text**)
         if part.startswith('**') and part.endswith('**'):
             inner_text = part[2:-2]
-            # Further nesting - parse inner content
-            _parse_with_formatting(inner_text, paragraph, bold=True, italic=italic)
-        # Italic text (*text*) - nested inside current context
+            _parse_formatting_segment(inner_text, paragraph, bold=True, italic=italic)
+        # Italic text (*text*)
         elif part.startswith('*') and part.endswith('*') and not part.startswith('**'):
             inner_text = part[1:-1]
-            _parse_with_formatting(inner_text, paragraph, bold=bold, italic=True)
+            _parse_formatting_segment(inner_text, paragraph, bold=bold, italic=True)
         # Inline code (`code`)
         elif part.startswith('`') and part.endswith('`'):
             code_text = part[1:-1]
@@ -170,6 +138,14 @@ def _parse_with_formatting(text, paragraph, bold=False, italic=False):
                 run.bold = True
             if italic:
                 run.italic = True
+
+
+def _parse_with_formatting(text, paragraph, bold=False, italic=False):
+    """Parse text that may contain nested formatting markers.
+
+    This is a compatibility alias for _parse_formatting_segment.
+    """
+    _parse_formatting_segment(text, paragraph, bold, italic)
 
 
 def handle_escapes(text):

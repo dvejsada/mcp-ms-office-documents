@@ -14,10 +14,8 @@ Test coverage:
 - Template registration from YAML
 """
 
-import os
 import sys
 from pathlib import Path
-from io import BytesIO
 
 # Add project root to path for imports
 project_root = Path(__file__).parent.parent
@@ -29,18 +27,11 @@ from docx.shared import Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 from docx_tools.dynamic_docx_tools import (
-    _replace_placeholder_in_paragraph,
     _replace_placeholders_in_paragraph,
-    _replace_placeholders_in_table,
     _replace_placeholders_in_document,
-    _insert_markdown_content_after_paragraph,
     find_docx_template_by_name,
-    register_docx_template_tools_from_yaml,
 )
-from docx_tools.helpers import (
-    contains_block_markdown,
-    process_markdown_block,
-)
+from docx_tools.helpers import contains_block_markdown
 
 # Output directory for test files
 OUTPUT_DIR = Path(__file__).parent / "output" / "docx"
@@ -58,7 +49,7 @@ def setup_output_dir():
 def save_document(doc: Document, filename: str) -> Path:
     """Save document to output directory and return path."""
     output_path = OUTPUT_DIR / filename
-    doc.save(output_path)
+    doc.save(str(output_path))
     print(f"Saved: {output_path}")
     return output_path
 
@@ -1409,6 +1400,252 @@ class TestIntegration:
         full_text = "\n".join([p.text for p in doc2.paragraphs])
         assert "Pavel Novotný" in full_text
         assert "spolupráce" in full_text
+
+
+# =============================================================================
+# Comprehensive Visual Inspection Test
+# =============================================================================
+
+class TestVisualInspection:
+    """Comprehensive test for manual visual inspection of template-based documents.
+
+    This test creates a document with ALL supported placeholder and markdown features
+    for easy visual verification in Word/LibreOffice.
+
+    Output: tests/output/docx/VISUAL_INSPECTION_templates.docx
+    """
+
+    def test_comprehensive_template_visual_document(self):
+        """Generate a comprehensive template-based document for visual inspection.
+
+        This document demonstrates:
+        - Placeholder replacement in various positions
+        - All inline markdown formatting (bold, italic, code, links)
+        - Block-level content (headings, lists)
+        - Nested formatting
+        - Tables with placeholders
+        - Headers and footers
+        - Unicode and special characters
+        """
+        doc = Document()
+
+        # === HEADER ===
+        section = doc.sections[0]
+        header = section.header
+        header_para = header.paragraphs[0]
+        header_para.add_run("{{company_name}} - {{document_type}}")
+
+        # === FOOTER ===
+        footer = section.footer
+        footer_para = footer.paragraphs[0]
+        footer_para.add_run("© {{year}} {{company_name}} | {{confidentiality}}")
+
+        # === DOCUMENT TITLE ===
+        title = doc.add_heading("{{document_title}}", level=0)
+
+        # === INTRODUCTION ===
+        doc.add_heading("1. Introduction", level=1)
+        intro_para = doc.add_paragraph()
+        intro_para.add_run("{{introduction}}")
+
+        # === INLINE FORMATTING SECTION ===
+        doc.add_heading("2. Inline Formatting Demo", level=1)
+        formatting_para = doc.add_paragraph()
+        formatting_para.add_run("{{formatting_demo}}")
+
+        # === LISTS SECTION ===
+        doc.add_heading("3. Lists Demo", level=1)
+
+        doc.add_heading("3.1 Unordered List", level=2)
+        unordered_para = doc.add_paragraph()
+        unordered_para.add_run("{{unordered_list}}")
+
+        doc.add_heading("3.2 Ordered List", level=2)
+        ordered_para = doc.add_paragraph()
+        ordered_para.add_run("{{ordered_list}}")
+
+        doc.add_heading("3.3 Mixed Lists", level=2)
+        mixed_para = doc.add_paragraph()
+        mixed_para.add_run("{{mixed_lists}}")
+
+        # === HEADINGS IN PLACEHOLDER ===
+        doc.add_heading("4. Dynamic Sections", level=1)
+        sections_para = doc.add_paragraph()
+        sections_para.add_run("{{dynamic_sections}}")
+
+        # === TABLE SECTION ===
+        doc.add_heading("5. Data Table", level=1)
+        table = doc.add_table(rows=4, cols=3)
+        table.style = 'Table Grid'
+
+        # Headers
+        table.cell(0, 0).text = "{{col1_header}}"
+        table.cell(0, 1).text = "{{col2_header}}"
+        table.cell(0, 2).text = "{{col3_header}}"
+
+        # Data rows
+        for i in range(1, 4):
+            for j in range(3):
+                table.cell(i, j).text = f"{{{{row{i}_col{j+1}}}}}"
+
+        doc.add_paragraph()  # Spacing
+
+        # === UNICODE SECTION ===
+        doc.add_heading("6. Unicode & Special Characters", level=1)
+        unicode_para = doc.add_paragraph()
+        unicode_para.add_run("{{unicode_content}}")
+
+        # === CONCLUSION ===
+        doc.add_heading("7. Conclusion", level=1)
+        conclusion_para = doc.add_paragraph()
+        conclusion_para.add_run("{{conclusion}}")
+
+        # === SIGNATURE ===
+        doc.add_paragraph()
+        doc.add_paragraph()
+        sig_para = doc.add_paragraph()
+        sig_para.add_run("{{signature_block}}")
+
+        # === CONTEXT VALUES ===
+        context = {
+            # Header/Footer
+            "company_name": "**Acme Corporation**",
+            "document_type": "Visual Inspection Report",
+            "year": "2026",
+            "confidentiality": "*Confidential*",
+
+            # Title
+            "document_title": "Comprehensive Template Visual Inspection",
+
+            # Introduction
+            "introduction": """This document demonstrates **all supported features** of the template placeholder system. 
+It includes *inline formatting*, `code elements`, and [hyperlinks](https://example.com).
+
+The purpose is to allow **manual visual inspection** to verify correct rendering in Word.""",
+
+            # Formatting demo
+            "formatting_demo": """Here you can see various formatting options:
+
+- **Bold text** for emphasis
+- *Italic text* for subtle emphasis
+- `Inline code` for technical terms
+- [Hyperlinks](https://example.com) for references
+- **Bold with *nested italic* inside**
+- *Italic with **nested bold** inside*
+
+All these should render correctly in the Word document.""",
+
+            # Unordered list
+            "unordered_list": """- First bullet item
+- Second item with **bold**
+- Third item with *italic*
+- Fourth item with `code`
+- Fifth item with [link](https://example.com)
+   - Nested sub-item 1
+   - Nested sub-item 2""",
+
+            # Ordered list
+            "ordered_list": """1. First numbered step
+2. Second step with **important** note
+3. Third step with *emphasis*
+4. Fourth step with `command`
+   1. Sub-step 4.1
+   2. Sub-step 4.2
+5. Fifth and final step""",
+
+            # Mixed lists
+            "mixed_lists": """Features to implement:
+- User authentication
+- Data validation
+- Error handling
+
+Implementation order:
+1. Design the architecture
+2. Write unit tests
+3. Implement features
+4. Deploy to production""",
+
+            # Dynamic sections with headings
+            "dynamic_sections": """## Section A: Overview
+This section provides an overview of the topic.
+
+### Subsection A.1
+Details about the first aspect.
+
+### Subsection A.2
+Details about the second aspect.
+
+## Section B: Implementation
+Here we discuss implementation details.
+
+- Key point 1
+- Key point 2
+- Key point 3""",
+
+            # Table data
+            "col1_header": "**Name**",
+            "col2_header": "**Role**",
+            "col3_header": "**Status**",
+            "row1_col1": "Jan Novák",
+            "row1_col2": "*Developer*",
+            "row1_col3": "Active",
+            "row2_col1": "Marie Svobodová",
+            "row2_col2": "*Designer*",
+            "row2_col3": "Active",
+            "row3_col1": "Petr Černý",
+            "row3_col2": "*Manager*",
+            "row3_col3": "On Leave",
+
+            # Unicode content
+            "unicode_content": """This section tests unicode character handling:
+
+**Czech:** Příliš žluťoučký kůň úpěl ďábelské ódy.
+
+**German:** Größe, Müller, Straße, Übung
+
+**Japanese:** こんにちは世界 (Hello World)
+
+**Emoji:** 👋 🌍 ⭐ ✨ ✓ ❤️ 🎉
+
+**Special XML:** 5 > 3 and 2 < 4 and A & B""",
+
+            # Conclusion
+            "conclusion": """This document has demonstrated **all major features** of the template system:
+
+1. Basic placeholder replacement
+2. Inline markdown formatting
+3. Block-level content (headings and lists)
+4. Tables with placeholders
+5. Headers and footers
+6. Unicode and special character handling
+
+If all elements above render correctly, the template system is working as expected! 🎉""",
+
+            # Signature
+            "signature_block": """**Prepared by:**
+*Quality Assurance Team*
+Acme Corporation
+
+[Contact us](https://example.com/contact)"""
+        }
+
+        # Replace all placeholders
+        _replace_placeholders_in_document(doc, context)
+
+        # Save the document
+        path = save_document(doc, "VISUAL_INSPECTION_templates.docx")
+        assert path.exists()
+
+        # Verify content
+        doc2 = Document(path)
+        full_text = "\n".join([p.text for p in doc2.paragraphs])
+
+        # Basic content checks
+        assert "Comprehensive Template Visual Inspection" in full_text
+        assert "Bold text" in full_text
+        assert "First bullet item" in full_text
+        assert "žluťoučký" in full_text
+        assert "こんにちは" in full_text
 
 
 if __name__ == "__main__":
