@@ -54,7 +54,7 @@ Dynamic email tools (optional):
 Dynamic DOCX template tools (optional):
 - If `config/docx_templates.yaml` exists, each entry is registered as its own document generation tool at startup. See below for details.
 
-- Short explanation: Dynamic DOCX templates are reusable Word documents with placeholders (`{{placeholder_name}}`) defined in `config/docx_templates.yaml`. At startup, the server registers each template as an individual MCP tool. Template-specific arguments are exposed as tool parameters. Placeholder values support markdown formatting (**bold**, *italic*, `code`, [links](url)) which is converted to proper Word formatting.
+- Short explanation: Dynamic DOCX templates are reusable Word documents with placeholders (`{{placeholder_name}}`) defined in `config/docx_templates.yaml`. At startup, the server registers each template as an individual MCP tool. Template-specific arguments are exposed as tool parameters. Placeholder values support full markdown formatting including inline styles (**bold**, *italic*, `code`, [links](url)) and block-level content (headings, bullet lists, numbered lists with nesting) which is converted to proper Word formatting with appropriate styles.
 
 Outputs:
 - LOCAL: files saved to `output/` and reported back
@@ -130,18 +130,25 @@ templates:
 
 ### Dynamic DOCX Templates
 
-Dynamic DOCX templates allow you to create reusable Word document templates with placeholders.
+Dynamic DOCX templates allow you to create reusable Word document templates with placeholders that support full markdown formatting.
 
-Setup:
-- Create `config/docx_templates.yaml` and reference DOCX template files by filename only (no paths).
-- Place your `.docx` template files in `custom_templates/` directory.
-- Use `{{placeholder_name}}` syntax in your Word document for placeholders.
+#### Setup
 
-Example YAML configuration (`config/docx_templates.yaml`):
+1. Create `config/docx_templates.yaml` and reference DOCX template files by filename only (no paths).
+2. Place your `.docx` template files in `custom_templates/` directory.
+3. Use `{{placeholder_name}}` syntax in your Word document for placeholders.
+4. Placeholders can be placed in document body, tables, headers, and footers.
+
+#### Example YAML configuration
+
+Create `config/docx_templates.yaml`:
 ```yaml
 templates:
   - name: formal_letter
-    description: Generate a formal business letter
+    description: |
+      Generate a formal business letter. All placeholder values support markdown formatting:
+      - Inline: **bold**, *italic*, `code`, [links](url)
+      - Block-level: headings (#), bullet lists (-, *, +), numbered lists (1., 2.)
     docx_path: letter_template.docx  # must exist in custom_templates/ or default_templates/
     annotations:
       title: Formal Letter Generator
@@ -152,7 +159,7 @@ templates:
         required: true
       - name: recipient_address
         type: string
-        description: Recipient's address
+        description: Recipient's address (use line breaks for multiple lines)
         required: true
       - name: subject
         type: string
@@ -160,17 +167,24 @@ templates:
         required: true
       - name: body
         type: string
-        description: "Letter body (supports markdown: **bold**, *italic*, [links](url))"
+        description: Main body of the letter
         required: true
       - name: sender_name
         type: string
         description: Sender's name
         required: true
+      - name: date
+        type: string
+        description: Letter date
+        required: false
+        default: ""
 ```
 
-Example DOCX template content (create in Word and save as `custom_templates/letter_template.docx`):
+#### Example DOCX template
+
+Create in Word and save as `custom_templates/letter_template.docx`:
 ```
-                                    {{date}}
+{{date}}
 
 {{recipient_name}}
 {{recipient_address}}
@@ -187,11 +201,63 @@ Subject: {{subject}}
 {{sender_title}}
 ```
 
-Markdown formatting in placeholder values:
-- `**bold text**` → Bold text
-- `*italic text*` → Italic text
-- `` `code` `` → Monospace font
-- `[link text](url)` → Clickable hyperlink
+#### Markdown Formatting Support
 
-The original font size and name from the placeholder location in the template are preserved for the replacement text.
+**Inline formatting** (works within any text):
+| Markdown | Result |
+|----------|--------|
+| `**bold text**` | Bold text |
+| `*italic text*` | Italic text |
+| `` `code` `` | Monospace font (Courier New) |
+| `[link text](url)` | Clickable hyperlink |
+| `**bold with *nested italic***` | Nested formatting |
+
+**Block-level markdown** (creates new paragraphs):
+
+| Markdown | Description |
+|----------|-------------|
+| `# Heading 1` through `###### Heading 6` | Heading levels 1-6 |
+| `- item` or `* item` or `+ item` | Bullet list |
+| `1. item`, `2. item` | Numbered list |
+| 3 spaces + list marker | Nested list (up to 3 levels) |
+
+Example of block-level content in a placeholder value:
+```markdown
+Here are the key points:
+
+1. First important item
+2. Second important item
+   - Sub-point A
+   - Sub-point B
+3. Third item with **bold** emphasis
+
+## Next Steps
+
+- Review the proposal
+- Schedule a follow-up meeting
+```
+
+#### Word Styles Used
+
+When creating custom templates, ensure these Word styles exist for proper formatting:
+
+**Heading styles:**
+- Heading 1 through Heading 6 (used for markdown `#` headings)
+
+**List styles:**
+- List Bullet, List Bullet 2, List Bullet 3 (for nested bullet lists)
+- List Number, List Number 2, List Number 3 (for nested numbered lists)
+
+**Other styles:**
+- Quote (for blockquotes - base tool only)
+- Table Grid (for markdown tables - base tool only)
+- Normal (regular paragraphs)
+
+> **Tip:** You can customize these styles in your template (font, size, color, spacing) and the system will use your customizations.
+
+#### Additional Features
+
+- **Font preservation:** The original font size and name from the placeholder location in the template are preserved for inline replacement text.
+- **Table support:** Placeholders work inside table cells with full markdown formatting.
+- **Header/Footer support:** Placeholders in document headers and footers are replaced (inline formatting only).
 

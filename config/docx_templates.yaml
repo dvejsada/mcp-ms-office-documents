@@ -78,14 +78,16 @@ templates:
   - name: formal_letter
     description: |
       Generate a formal business letter with customizable recipient, subject, body, and sender information.
-      Body supports full markdown formatting including bold, italic, links, bullet points, and numbered lists.
+      All placeholder values support markdown formatting:
+      - Inline: **bold**, *italic*, `code`, [links](url)
+      - Block-level: headings (#), bullet lists (-, *, +), numbered lists (1., 2.)
     docx_path: letter_template.docx  # Must be in custom_templates/ directory
     annotations:
       title: Formal Letter Generator
     args:
       - name: recipient_name
         type: string
-        description: Full name of the recipient (e.g., "John Smith"), bold
+        description: Full name of the recipient (e.g., "John Smith")
         required: true
       - name: recipient_address
         type: string
@@ -98,7 +100,7 @@ templates:
         default: ""
       - name: subject
         type: string
-        description: Letter subject line bold formatted
+        description: Letter subject line
         required: true
       - name: salutation
         type: string
@@ -106,14 +108,7 @@ templates:
         required: true
       - name: body
         type: string
-        description: |
-          Main body of the letter. Supports full markdown formatting:
-          - **bold** and *italic* text
-          - `inline code`
-          - [hyperlinks](url)
-          - Headings (# H1, ## H2, ### H3, etc.)
-          - Bullet points (lines starting with -, *, or +)
-          - Numbered lists (lines starting with 1., 2., etc.)
+        description: Main body of the letter
         required: true
       - name: closing
         type: string
@@ -122,7 +117,7 @@ templates:
         default: "Sincerely,"
       - name: sender_name
         type: string
-        description: Sender's full name bold fomatted
+        description: Sender's full name
         required: true
       - name: sender_title
         type: string
