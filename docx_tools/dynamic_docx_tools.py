@@ -47,9 +47,6 @@ from .helpers import (
     parse_inline_formatting,
     contains_block_markdown,
     process_markdown_block,
-    ORDERED_LIST_PATTERN,
-    UNORDERED_LIST_PATTERN,
-    HEADING_PATTERN,
 )
 
 __all__ = ["register_docx_template_tools_from_yaml"]
