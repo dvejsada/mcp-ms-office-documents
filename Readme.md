@@ -1,6 +1,6 @@
 # MCP Office Documents Server
 
-This server lets AI assistants generate professional PowerPoint, Word, Excel, and EML email drafts through the Model Context Protocol (MCP).
+This server lets AI assistants generate professional PowerPoint, Word, Excel, XML, and EML email drafts through the Model Context Protocol (MCP).
 
 ## 1) Installation
 
@@ -37,6 +37,9 @@ The server exposes these MCP tools:
 
 - create_word_from_markdown
   - Converts Markdown to .docx, supporting headers, lists, tables, inline formatting, links, block quotes
+  - **Markdown formatting:** All placeholder values support full markdown:
+    - Inline: `**bold**`, `*italic*`, `` `code` ``, `[links](url)`
+    - Block-level: headings (`#`), bullet lists (`-`, `*`, `+`), numbered lists (`1.`, `2.`)
 
 - create_excel_from_markdown
   - Converts Markdown tables and headers to .xlsx
@@ -46,6 +49,11 @@ The server exposes these MCP tools:
   - Creates an EML draft with an HTML body using a preset wrapper template
   - Accepts subject, to/cc/bcc, priority, language, and raw content (no <html>/<body>/<style>)
 
+- create_xml_file
+  - Creates an XML file from provided XML content
+  - Validates that input is well-formed XML before saving
+  - XML declaration (`<?xml version="1.0"?>`) is added automatically if missing
+
 Dynamic email tools (optional):
 - If `config/email_templates.yaml` exists, each entry is registered as its own email-draft tool at startup. See below for details.
 
@@ -54,7 +62,7 @@ Dynamic email tools (optional):
 Dynamic DOCX template tools (optional):
 - If `config/docx_templates.yaml` exists, each entry is registered as its own document generation tool at startup. See below for details.
 
-- Short explanation: Dynamic DOCX templates are reusable Word documents with placeholders (`{{placeholder_name}}`) defined in `config/docx_templates.yaml`. At startup, the server registers each template as an individual MCP tool. Template-specific arguments are exposed as tool parameters. Placeholder values support full markdown formatting including inline styles (**bold**, *italic*, `code`, [links](url)) and block-level content (headings, bullet lists, numbered lists with nesting) which is converted to proper Word formatting with appropriate styles.
+- Short explanation: Dynamic DOCX templates are reusable Word documents with placeholders (`{{placeholder_name}}`) defined in `config/docx_templates.yaml`. At startup, the server registers each template as an individual MCP tool. Template-specific arguments are exposed as tool parameters. Placeholder values support the same markdown formatting as described above for `create_word_from_markdown`.
 
 Outputs:
 - LOCAL: files saved to `output/` and reported back
@@ -145,10 +153,7 @@ Create `config/docx_templates.yaml`:
 ```yaml
 templates:
   - name: formal_letter
-    description: |
-      Generate a formal business letter. All placeholder values support markdown formatting:
-      - Inline: **bold**, *italic*, `code`, [links](url)
-      - Block-level: headings (#), bullet lists (-, *, +), numbered lists (1., 2.)
+    description: Generate a formal business letter. Placeholder values support markdown formatting (see tool overview).
     docx_path: letter_template.docx  # must exist in custom_templates/ or default_templates/
     annotations:
       title: Formal Letter Generator
@@ -167,7 +172,7 @@ templates:
         required: true
       - name: body
         type: string
-        description: Main body of the letter
+        description: Main body of the letter (supports markdown)
         required: true
       - name: sender_name
         type: string

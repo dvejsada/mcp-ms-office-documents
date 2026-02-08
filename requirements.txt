@@ -11,3 +11,4 @@ pystache>=0.6.5
 google-cloud-storage>=2.18.2
 azure-storage-blob>=12.23.1
 requests>=2.31.0
+defusedxml>=0.7.1
