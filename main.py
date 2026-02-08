@@ -10,6 +10,7 @@ from email_tools.dynamic_email_tools import register_email_template_tools_from_y
 from pathlib import Path
 import logging
 from config import get_config
+from xml_tools import create_xml_file
 
 mcp = FastMCP("MCP Office Documents")
 
@@ -201,6 +202,30 @@ async def create_email_draft(
     except Exception as e:
         logger.error(f"Error creating email draft: {e}")
         return f"Error creating email draft: {str(e)}"
+
+@mcp.tool(
+    name="create_xml_file",
+    description="Creates an XML file from provided XML content.",
+    tags={"xml", "data", "configuration"},
+    annotations={"title": "XML File Creator"}
+)
+async def create_xml_document(
+    xml_content: Annotated[str, Field(description="Complete, well-formed XML content. Must be valid XML with proper opening and closing tags.")]
+) -> str:
+    """
+    Creates an XML file from provided XML content.
+    Validates that the XML is well-formed before saving.
+    """
+
+    logger.info("Creating XML file")
+
+    try:
+        result = create_xml_file(xml_content)
+        logger.info(f"XML file created: {result}")
+        return result
+    except Exception as e:
+        logger.error(f"Error creating XML file: {e}")
+        return f"Error creating XML file: {str(e)}"
 
 if __name__ == "__main__":
     mcp.run(
