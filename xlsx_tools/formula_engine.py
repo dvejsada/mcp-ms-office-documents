@@ -105,7 +105,10 @@ _KEY_RE = re.compile(
     ([^']+)             # group 1: sheet name (uppercased by the library)
     '?                  # optional closing quote
     !                   # bang
-    ([A-Za-z]+\$?\d+)   # group 2: cell coordinate (e.g. B2, $A$1)
+    ([A-Za-z]+\$?\d+)   # group 2: cell coordinate (e.g. B2). The library
+                        # normalizes absolute refs ($A$1) to bare coords (A1)
+                        # in its solution keys, so we don't need to match
+                        # a leading $ before the column letters.
     $
     """,
     re.VERBOSE,
@@ -181,11 +184,26 @@ def _unwrap_scalar(value: Any) -> Any:
 
 
 def _is_error_string(value: Any) -> str | None:
-    """Return the matching Excel error sentinel if ``value`` is one, else None."""
+    """Return the matching Excel error sentinel if ``value`` is one, else None.
+
+    The ``formulas`` library returns Excel errors as instances of
+    ``formulas.cell.XlError`` — a subclass of ``str`` whose ``__eq__``
+    does not behave like ``str.__eq__`` (``XlError('#DIV/0!') ==
+    '#DIV/0!'`` evaluates to ``False``), so a naive ``value == err``
+    check would miss every real error. We compare ``str(value)``
+    (which yields the clean sentinel like ``'#DIV/0!'``) against the
+    known error list with an exact match.
+
+    Exact match (not substring) is deliberate: a legitimate string
+    result like ``"#N/A not found"`` from
+    ``=IF(ISNA(VLOOKUP(...)), "#N/A not found", "OK")`` must not be
+    flagged as a formula error.
+    """
     if not isinstance(value, str):
         return None
+    text = str(value)
     for err in EXCEL_ERRORS:
-        if value == err or err in value:
+        if text == err:
             return err
     return None
 
@@ -350,7 +368,10 @@ def recalculate_workbook(
     result = RecalcResult(recalc_performed=True)
 
     # Materialise the workbook on disk for the library to load. `formulas`
-    # only accepts a file path, not a stream.
+    # only accepts a file path, not a stream. We ALWAYS copy to a temp file
+    # — even when the caller passes a path — so that the external-link
+    # blanking pre-pass (which writes back to ``load_path``) can never
+    # corrupt the caller's original file.
     tmp_path: str | None = None
     try:
         if isinstance(xlsx_bytes_or_path, (bytes, bytearray)):
@@ -361,7 +382,16 @@ def recalculate_workbook(
                 tmp_path = tmp.name
             load_path = tmp_path
         else:
-            load_path = str(xlsx_bytes_or_path)
+            # Copy the caller's file to a temp location so subsequent
+            # in-place edits (external-link blanking) don't mutate the
+            # original. Without this, a path input would have its
+            # external-link formulas silently deleted on disk.
+            import shutil
+            src_path = str(xlsx_bytes_or_path)
+            tmp_fd, tmp_path = tempfile.mkstemp(suffix=".xlsx")
+            os.close(tmp_fd)
+            shutil.copyfile(src_path, tmp_path)
+            load_path = tmp_path
 
         _suppress_tqdm()
 
@@ -533,9 +563,8 @@ def _normalize_coord(coord: str) -> str:
 
 def _expand_range(start: str, end: str) -> list[str]:
     """Expand an Excel range like ('A1','B3') into ['A1','A2','A3','B1','B2','B3']."""
-    import re as _re
-    start_m = _re.match(r"([A-Z]+)(\d+)", start.upper())
-    end_m = _re.match(r"([A-Z]+)(\d+)", end.upper())
+    start_m = re.match(r"([A-Z]+)(\d+)", start.upper())
+    end_m = re.match(r"([A-Z]+)(\d+)", end.upper())
     if not start_m or not end_m:
         return [start]
     # Convert column letters to numbers for iteration.
@@ -781,28 +810,56 @@ def detect_circular_references(
     # be noisy for large interconnected cycles.
     cyclic_nodes: set[str] = set()
 
-    def dfs(node: str, stack: list[str]) -> None:
-        color[node] = GRAY
-        stack.append(node)
-        for dep in graph.get(node, ()):
-            if dep not in color:
-                # Dependency isn't itself a formula node (it's a literal
-                # cell or external). Skip — it can't participate in a cycle.
-                continue
-            if color[dep] == GRAY:
-                # Back-edge: cycle detected. Mark every cell on the cycle
-                # path from `dep` to `node` (inclusive) as circular.
-                cycle_start = stack.index(dep)
-                for cyclic in stack[cycle_start:]:
-                    cyclic_nodes.add(cyclic)
-            elif color[dep] == WHITE:
-                dfs(dep, stack)
-        stack.pop()
-        color[node] = BLACK
+    # Iterative DFS (the recursion depth of the recursive version could
+    # hit Python's default limit of 1000 frames on a long formula chain
+    # — e.g. a 500-row running-total column where each row references
+    # the one above). We keep an explicit stack of (node, deps_iterator,
+    # path_index) frames so we can unwind without recursion.
+    for start_node in list(graph.keys()):
+        if color[start_node] != WHITE:
+            continue
+        # Each stack frame: the node being visited, an iterator over its
+        # dependencies, and its index in `path` (so we can truncate the
+        # path when we finish the node).
+        path: list[str] = []
+        stack: list[tuple[str, Any, int]] = [
+            (start_node, iter(sorted(graph.get(start_node, ()))), 0)
+        ]
+        color[start_node] = GRAY
+        path.append(start_node)
 
-    for node in list(graph.keys()):
-        if color[node] == WHITE:
-            dfs(node, [])
+        while stack:
+            node, deps_iter, path_idx = stack[-1]
+            advanced = False
+            for dep in deps_iter:
+                if dep not in color:
+                    # Dependency isn't itself a formula node (literal or
+                    # external). Skip — it can't participate in a cycle.
+                    continue
+                if color[dep] == GRAY:
+                    # Back-edge: cycle detected. Mark every cell on the
+                    # cycle path from `dep` to `node` (inclusive) as
+                    # circular.
+                    cycle_start = path.index(dep)
+                    for cyclic in path[cycle_start:]:
+                        cyclic_nodes.add(cyclic)
+                    # Continue scanning remaining deps of `node`.
+                    continue
+                if color[dep] == WHITE:
+                    # Descend into `dep`.
+                    color[dep] = GRAY
+                    path.append(dep)
+                    stack.append(
+                        (dep, iter(sorted(graph.get(dep, ()))), len(path) - 1)
+                    )
+                    advanced = True
+                    break
+            if not advanced:
+                # Finished all deps of `node` — mark black and pop.
+                color[node] = BLACK
+                # Truncate the path back to this node's parent.
+                del path[path_idx:]
+                stack.pop()
 
     # Convert cyclic nodes to CellError objects.
     errors: list[CellError] = []
@@ -827,6 +884,12 @@ def _parse_location(location_key: str) -> tuple[str, str]:
     """Parse ``"Sheet!Cell"`` or ``"'Sheet Name'!Cell"`` into (sheet, cell).
 
     Inverse of :func:`_format_location`.
+
+    NOTE: an identical helper exists in :mod:`xlsx_tools.xml_cache` (kept
+    duplicated so that module stays decoupled from the recalc engine). If
+    you change the quoting rules here, update the sibling too — otherwise
+    cycle detection and value injection will silently disagree on
+    sheet-name edge cases.
     """
     if location_key.startswith("'"):
         close = location_key.find("'", 1)

@@ -332,14 +332,23 @@ def _recalc_and_inject(
 
     if is_available():
         # Run the (potentially slow) engine in a worker thread with a hard
-        # timeout. concurrent.futures is stdlib and avoids the asyncio dance.
+        # timeout. We deliberately do NOT use the `with ThreadPoolExecutor`
+        # context-manager form: its __exit__ calls shutdown(wait=True), which
+        # would block until the engine thread finishes — exactly the hang the
+        # timeout is meant to prevent. Instead we manage the executor
+        # manually and shut it down without waiting on timeout/error paths.
         import concurrent.futures
 
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(recalculate_workbook, xlsx_bytes, sheet_names)
         try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(recalculate_workbook, xlsx_bytes, sheet_names)
-                result = future.result(timeout=timeout_seconds)
+            result = future.result(timeout=timeout_seconds)
         except concurrent.futures.TimeoutError:
+            # Don't wait for the still-running engine thread; cancel pending
+            # work and let the worker be reclaimed by the interpreter. A
+            # long-running numpy/scipy call can't be interrupted cooperively,
+            # but at least the main request thread returns promptly.
+            executor.shutdown(wait=False, cancel_futures=True)
             logger.warning(
                 "Formula recalc skipped: exceeded %ds timeout — delivering file "
                 "without cached values (Excel will recalc on open)",
@@ -349,9 +358,13 @@ def _recalc_and_inject(
             summary = _format_grouped_errors(all_errors) if all_errors else None
             return xlsx_bytes, summary
         except Exception as e:
+            executor.shutdown(wait=False, cancel_futures=True)
             logger.warning("Formula recalc skipped: engine error: %s", e)
             summary = _format_grouped_errors(all_errors) if all_errors else None
             return xlsx_bytes, summary
+        else:
+            # Normal completion — clean shutdown that joins the worker.
+            executor.shutdown(wait=True)
 
         if result.recalc_performed:
             values_map = result.values_map

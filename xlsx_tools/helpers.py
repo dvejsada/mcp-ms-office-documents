@@ -275,7 +275,7 @@ def resolve_cell(raw_text: str) -> CellResult:
         except ValueError:
             pass  # Not a valid percent number — fall through
 
-    # Step 5: Try numeric conversion
+    # Step 4: Try numeric conversion
     try:
         numeric_val = float(_strip_thousands_separators(clean_text))
         return CellResult(
@@ -285,7 +285,7 @@ def resolve_cell(raw_text: str) -> CellResult:
     except ValueError:
         pass
 
-    # Step 6: Try date detection (after numeric, so "2024" isn't parsed as a date)
+    # Step 5: Try date detection (after numeric, so "2024" isn't parsed as a date)
     date_result = _try_parse_date(clean_text)
     if date_result:
         dt, xl_fmt = date_result
@@ -294,7 +294,7 @@ def resolve_cell(raw_text: str) -> CellResult:
             bold=bold, italic=italic, monospace=monospace,
         )
 
-    # Step 7: Plain text
+    # Step 6: Plain text
     return CellResult(
         value=clean_text,
         bold=bold, italic=italic, monospace=monospace,

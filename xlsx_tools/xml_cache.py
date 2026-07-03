@@ -12,14 +12,13 @@ application opens the file.
 
 This module post-processes the XLSX bytes to replace the empty ``<v>``
 with the value computed by :mod:`xlsx_tools.formula_engine`. It walks
-the zip archive, parses each worksheet XML with stdlib ElementTree,
-and rewrites only the cells that contain a formula and have a computed
-value available. All other content (styles, fonts, number formats,
-freeze panes, table definitions, shared strings) is preserved
-byte-for-byte because we only touch the worksheet XML files.
-
-No third-party XML library is required — stdlib ``xml.etree.ElementTree``
-is sufficient and keeps the Docker image lean.
+the zip archive, parses each worksheet XML with ``defusedxml.ElementTree``
+(a drop-in for stdlib ElementTree that blocks XXE / billion-laughs /
+entity-expansion attacks), and rewrites only the cells that contain a
+formula and have a computed value available. All other content (styles,
+fonts, number formats, freeze panes, table definitions, shared strings,
+drawings, etc.) is preserved byte-for-byte because we only touch the
+worksheet XML files.
 """
 
 from __future__ import annotations
@@ -31,6 +30,8 @@ import zipfile
 from datetime import date, datetime
 from typing import Any
 from xml.etree import ElementTree as ET
+
+import defusedxml.ElementTree as DefusedET
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +80,7 @@ def _build_sheet_file_map(zf: zipfile.ZipFile) -> dict[str, str]:
     rels_by_id: dict[str, str] = {}
     try:
         rels_xml = zf.read("xl/_rels/workbook.xml.rels")
-        rels_root = ET.fromstring(rels_xml)
+        rels_root = DefusedET.fromstring(rels_xml)
         for rel in rels_root:
             rid = rel.get(_ATTR_ID)
             target = rel.get(_ATTR_TARGET)
@@ -92,7 +93,7 @@ def _build_sheet_file_map(zf: zipfile.ZipFile) -> dict[str, str]:
     sheet_map: dict[str, str] = {}
     try:
         wb_xml = zf.read("xl/workbook.xml")
-        wb_root = ET.fromstring(wb_xml)
+        wb_root = DefusedET.fromstring(wb_xml)
         for sheet in wb_root.iter(_TAG_SHEET):
             name = sheet.get(_ATTR_NAME)
             rid = sheet.get(_ATTR_R)
@@ -162,7 +163,16 @@ def _format_float(value: float) -> str:
     ``repr(float)`` gives the shortest round-trippable representation
     in Python 3, which is what we want. Integers stored as floats
     (e.g. ``600.0``) become ``"600"`` for cleaner output.
+
+    Non-finite values (``nan``, ``inf``, ``-inf``) are returned via
+    ``repr()`` — ``int(float('inf'))`` raises ``OverflowError`` and the
+    ``nan == int(nan)`` comparison raises ``ValueError``, which would
+    otherwise propagate and silently drop every cached value for the
+    whole worksheet. Excel renders these as error cells anyway.
     """
+    import math
+    if not math.isfinite(value):
+        return repr(value)
     if value == int(value) and abs(value) < 1e15:
         return str(int(value))
     return repr(value)
@@ -193,7 +203,7 @@ def count_formulas(xlsx_bytes: bytes) -> int:
                 if not info.filename.startswith("xl/worksheets/sheet"):
                     continue
                 data = zf.read(info.filename)
-                root = ET.fromstring(data)
+                root = DefusedET.fromstring(data)
                 # A formula cell has an <f> child. Count cells where
                 # find('f') succeeds.
                 for cell in root.iter(_TAG_C):
@@ -325,7 +335,7 @@ def _inject_into_sheet_xml(
     ``<f>`` child (i.e. formula cells) are modified; this prevents us
     from accidentally overwriting literal values.
     """
-    root = ET.fromstring(sheet_xml)
+    root = DefusedET.fromstring(sheet_xml)
     injected = 0
 
     for cell in root.iter(_TAG_C):
