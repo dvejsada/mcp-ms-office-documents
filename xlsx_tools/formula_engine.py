@@ -16,6 +16,7 @@ the MIT license of this server.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import re
 import tempfile
@@ -445,6 +446,23 @@ def recalculate_workbook(
 
             scalar = _unwrap_scalar(value)
             if scalar is None:
+                continue
+
+            # Non-finite floats (nan / inf / -inf) can come back from numpy
+            # for operations like 0/0 or overflow. Recording them as #NUM!
+            # errors here keeps them out of xml_cache: writing <v>nan</v>
+            # into a numeric cell produces non-conformant OOXML (ECMA-376
+            # xsd:double special values are case-sensitive "NaN"/"INF"),
+            # which can make Excel flag the file for repair on open. Excel
+            # will recalc the cell natively and show #NUM! anyway.
+            if isinstance(scalar, float) and not math.isfinite(scalar):
+                result.errors.append(
+                    CellError(
+                        sheet=original_sheet,
+                        coordinate=coordinate,
+                        error_type="#NUM!",
+                    )
+                )
                 continue
 
             # Error sentinel? Record and skip injection.

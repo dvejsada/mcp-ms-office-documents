@@ -164,11 +164,16 @@ def _format_float(value: float) -> str:
     in Python 3, which is what we want. Integers stored as floats
     (e.g. ``600.0``) become ``"600"`` for cleaner output.
 
-    Non-finite values (``nan``, ``inf``, ``-inf``) are returned via
-    ``repr()`` — ``int(float('inf'))`` raises ``OverflowError`` and the
-    ``nan == int(nan)`` comparison raises ``ValueError``, which would
-    otherwise propagate and silently drop every cached value for the
-    whole worksheet. Excel renders these as error cells anyway.
+    Non-finite values (``nan``, ``inf``, ``-inf``) are caught upstream
+    in :mod:`xlsx_tools.formula_engine` and recorded as ``#NUM!`` errors
+    so they never reach this function — writing ``<v>nan</v>`` into a
+    numeric cell would produce non-conformant OOXML (ECMA-376
+    ``xsd:double`` special values are case-sensitive ``"NaN"``/``"INF"``)
+    and could make Excel flag the file for repair. The guard here is
+    defensive-only, in case this function is ever called directly: it
+    prevents the ``OverflowError``/``ValueError`` that ``int(value)``
+    would raise for non-finite floats, which would otherwise silently
+    drop every cached value for the worksheet.
     """
     import math
     if not math.isfinite(value):

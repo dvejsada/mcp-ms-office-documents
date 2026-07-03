@@ -236,6 +236,67 @@ class TestEngineErrors:
         for e in ("#REF!", "#DIV/0!", "#VALUE!", "#NAME?", "#NULL!", "#NUM!", "#N/A"):
             assert e in EXCEL_ERRORS
 
+    def test_non_finite_float_recorded_as_num_error(self):
+        """A non-finite float result (nan/inf) is recorded as #NUM! and
+        kept out of values_map, so it never reaches xml_cache.
+
+        Writing <v>nan</v> into a numeric cell produces non-conformant
+        OOXML (ECMA-376 xsd:double special values are case-sensitive
+        "NaN"/"INF"), which can make Excel flag the file for repair.
+        The engine layer catches these alongside the string-error check
+        so they're treated as formula errors instead.
+        """
+        import math
+        from xlsx_tools.formula_engine import CellError
+
+        wb = Workbook()
+        ws = wb.active
+        ws["A1"] = 1
+        ws["A2"] = "=A1+0"  # normal formula, will be in solution
+        data = _save_wb(wb)
+
+        # Patch _unwrap_scalar to return nan for A2, simulating a numpy
+        # nan result (e.g. from 0/0 or overflow in an intermediate).
+        from xlsx_tools import formula_engine
+        original = formula_engine._unwrap_scalar
+
+        def fake_unwrap(value):
+            scalar = original(value)
+            # The solution key for A2 is uppercased sheet + coord; we detect
+            # it by checking the Ranges value (which carries the coord).
+            try:
+                if "A2" in str(value):
+                    return float("nan")
+            except Exception:
+                pass
+            return scalar
+
+        with patch("xlsx_tools.formula_engine._unwrap_scalar", side_effect=fake_unwrap):
+            result = recalculate_workbook(data, ["Sheet"])
+
+        # nan result must be a #NUM! error, not a cached value.
+        num_errors = [e for e in result.errors if e.error_type == "#NUM!"]
+        assert len(num_errors) == 1
+        assert num_errors[0].coordinate == "A2"
+        assert num_errors[0].sheet == "Sheet"
+        # And it must NOT be in values_map.
+        assert "Sheet!A2" not in result.values_map
+
+    def test_format_float_handles_non_finite_defensively(self):
+        """_format_float must not raise on nan/inf (defensive guard — the
+        engine layer normally catches these first, but a direct caller
+        shouldn't crash either)."""
+        from xlsx_tools.xml_cache import _format_float
+        import math
+
+        # Must not raise.
+        assert math.isnan(float(_format_float(float("nan"))))
+        assert _format_float(float("inf")) == "inf"
+        assert _format_float(float("-inf")) == "-inf"
+        # Normal values still work.
+        assert _format_float(1.5) == "1.5"
+        assert _format_float(600.0) == "600"
+
 
 # ── Engine: robustness ───────────────────────────────────────────────────────
 
