@@ -54,22 +54,25 @@ def validate_xml(xml_content: str) -> Tuple[bool, str]:
         return False, f"Unexpected error during XML validation: {str(e)}"
 
 
-def create_xml_file(xml_content: str, file_name: str | None = None) -> str:
-    """Create an XML file from the provided XML content.
+def _create_xml_buffer(xml_content: str) -> io.BytesIO:
+    """Create an XML file buffer from the provided XML content.
 
-    Validates that the content is well-formed XML before saving.
+    This function is useful when the caller needs to handle upload separately,
+    such as for LibreChat file artifact uploads.
+
+    Validates that the content is well-formed XML before creating the buffer.
 
     Args:
         xml_content: Complete, valid XML content string.
 
     Returns:
-        A status message with the download URL or file path.
+        BytesIO buffer containing the XML file (position at start)
 
     Raises:
         XMLValidationError: If the XML content is invalid or contains security threats.
-        XMLFileCreationError: If file creation or upload fails.
+        XMLFileCreationError: If buffer creation fails.
     """
-    logger.info("Starting XML file creation")
+    logger.info("Starting XML buffer creation")
 
     # Strip leading/trailing whitespace
     xml_content = xml_content.strip()
@@ -88,29 +91,46 @@ def create_xml_file(xml_content: str, file_name: str | None = None) -> str:
         match = re.search(r'encoding=["\']([^"\']+)["\']', xml_content)
         if match:
             encoding = match.group(1)
-            logger.debug(f"Using encoding from XML declaration: {encoding}")
     else:
         # Add UTF-8 declaration if no declaration present
         xml_content = '<?xml version="1.0" encoding="UTF-8"?>\n' + xml_content
-        logger.debug("Added XML declaration with UTF-8 encoding")
 
     try:
-        # Create a file-like object from the XML content using declared encoding
         xml_bytes = xml_content.encode(encoding)
         file_object = io.BytesIO(xml_bytes)
+        return file_object
+    except Exception as e:
+        logger.error(f"Error creating XML buffer: {str(e)}", exc_info=True)
+        raise XMLFileCreationError(f"Error creating XML buffer: {str(e)}") from e
 
-        try:
-            # Upload the file
-            result = upload_file(file_object, "xml", filename=file_name)
-            logger.info("XML file uploaded successfully")
-            return result
-        finally:
-            file_object.close()
 
+def create_xml_file(xml_content: str, file_name: str | None = None) -> str:
+    """Create an XML file from the provided XML content.
+
+    Validates that the content is well-formed XML before saving.
+
+    Args:
+        xml_content: Complete, valid XML content string.
+
+    Returns:
+        A status message with the download URL or file path.
+
+    Raises:
+        XMLValidationError: If the XML content is invalid or contains security threats.
+        XMLFileCreationError: If file creation or upload fails.
+    """
+    file_object = None
+    try:
+        file_object = _create_xml_buffer(xml_content)
+        result = upload_file(file_object, "xml", filename=file_name)
+        logger.info("XML file uploaded successfully")
+        return result
     except (XMLValidationError, XMLFileCreationError):
-        # Re-raise our custom exceptions as-is
         raise
     except Exception as e:
         logger.error(f"Error creating XML file: {str(e)}", exc_info=True)
         raise XMLFileCreationError(f"Error creating XML file: {str(e)}") from e
+    finally:
+        if file_object:
+            file_object.close()
 
