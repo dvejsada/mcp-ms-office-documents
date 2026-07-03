@@ -18,6 +18,7 @@
 - [Features at a Glance](#-features-at-a-glance)
 - [Quick Start](#-quick-start)
 - [Configuration](#-configuration)
+- [Markdown Reference](#-markdown-reference)
 - [Custom Templates](#-custom-templates)
 - [Connecting Your AI Client](#-connecting-your-ai-client)
 - [Contributing](#-contributing)
@@ -39,7 +40,7 @@ Just ask your AI to _"create a sales presentation"_ or _"draft a welcome email"_
 | Document Type | Tool | Highlights |
 |:---:|---|---|
 | 📊 **PowerPoint** | `create_powerpoint_presentation` | Title, section & content slides · 4:3 or 16:9 format · Custom templates · Author metadata, footer text & slide numbers · Inline markdown (**bold**, *italic*, ~~strikethrough~~, `code`) · Table column alignment |
-| 📝 **Word** | `create_word_from_markdown` | Write in Markdown, get a `.docx` · Headers, lists, tables, links, formatting · Superscript, subscript & highlighted text · Table column alignment, borderless tables & proportional column widths · Multi-paragraph table cells |
+| 📝 **Word** | `create_word_from_markdown` | Write in Markdown, get a `.docx` · Headings, lists (with auto-restart), tables, links, images, block quotes, page breaks & text alignment · Superscript, subscript, underline & highlighted text · Table column alignment, borderless tables, proportional widths & multi-paragraph cells · Headers/footers with page numbers · Table of Contents · Custom style mapping & per-block style tags |
 | 📈 **Excel** | `create_excel_from_markdown` | Markdown tables → `.xlsx` · Formulas & cell references · Pure-Python formula recalculation (no LibreOffice) so cached values render in previewers · **Circular-reference detection** via graph analysis · Error policy via `XLSX_RECALC_STRICT` env var · Cross-sheet & external-workbook links · Source citations with cell comments · Dash/parens/multiples number formats · Custom default fonts · Configurable recalc timeout |
 | 📧 **Email** | `create_email_draft` | HTML email drafts (`.eml`) · Subject, recipients, priority, language |
 | 🗂️ **XML** | `create_xml_file` | Well-formed XML files · Auto-validates & adds XML declaration if missing |
@@ -219,6 +220,130 @@ Set `RUN_BLOCKING_BY_ASYNCIO_THREAD_ENABLED=false` only for local debugging or t
 
 ---
 
+## 📝 Markdown Reference
+
+Both the Word and Excel tools accept Markdown. These references cover **everything** the parsers understand — including features that are easy to miss.
+
+> **Golden rule:** separate every block element (heading, list, table, quote…) with a **blank line**.
+
+<details>
+<summary><strong>📝 Word Markdown — full syntax</strong></summary>
+
+**Tool parameters** (`create_word_from_markdown`):
+
+| Parameter | Description |
+|-----------|-------------|
+| `markdown_content` | The document body (see syntax below) |
+| `title` / `author` / `subject` | Document properties (file metadata) |
+| `header_text` / `footer_text` | Text for the top/bottom of every page. Use `{page}` for the current page number and `{pages}` for the total |
+| `include_toc` | Insert an auto-updating Table of Contents at the start |
+| `file_name` | Output filename without extension |
+
+**Block elements** (each on its own line, separated by blank lines):
+
+| Syntax | Result |
+|--------|--------|
+| `# H1` … `###### H6` | Headings 1–6 |
+| `- item` / `* item` / `+ item` | Bullet list (nest by indenting children — 2-4 spaces or a tab → `List Bullet 2/3`) |
+| `1. item` / `2. item` | Numbered list (nest by indenting children). **Numbering restarts automatically** whenever a list begins again with `1.` |
+| `> quote` | Block quote (`Quote` style) |
+| `\| A \| B \|` + `\|---\|---\|` | Table (see table features below) |
+| ` ``` ` … ` ``` ` (or `~~~`) | Fenced code block — content is rendered verbatim in a monospace font and **not** parsed as markdown |
+| `![alt](url)` | Image |
+| `---` (3+ dashes) | **Page break** (starts a new page) |
+| `***` (3+ asterisks) | Horizontal line (visual separator) |
+
+> ⚠️ Don't confuse `---` (page break) with `***` (horizontal line).
+
+> 💡 A single numbered line is only treated as a list when it starts at `1.` **or** is followed by another item. This means a standalone date like `23. června 2026` renders as plain text, not a list. The one exception is a day-1 date (`1. června 2026`), which is indistinguishable from a one-item list — escape the dot to keep it as text: `1\. června 2026`.
+
+**Inline formatting** (works in paragraphs, headings, list items, table cells, quotes):
+
+| Syntax | Result |
+|--------|--------|
+| `**bold**` · `*italic*` · `***bold italic***` | Bold / italic / both |
+| `~~strikethrough~~` | Strikethrough |
+| `__underline__` | Underline (double underscore — **not** bold) |
+| `==highlight==` | Yellow highlight |
+| `` `code` `` | Monospace (Courier New) |
+| `^super^` · `~sub~` | Superscript (`x^2^`) / subscript (`H~2~O`) |
+| `[text](url)` | Hyperlink |
+| `\*` `\**` `` \` `` `\.` | Escaped literals (render the marker as text — e.g. `1\.` keeps a day-1 date from becoming a list) |
+
+Nesting and combinations work, e.g. `**bold with *italic* inside**`, `**~~bold strikethrough~~**`.
+
+**Table features** — place the directive on the line **directly above** the table:
+
+| Directive / syntax | Effect |
+|--------------------|--------|
+| `\|:---\|:---:\|---:\|` separator | Column alignment: left / center / right |
+| `<!-- borderless -->` | Remove all borders (great for bilingual/parallel layouts) |
+| `<!-- widths: 30 70 -->` | Proportional column widths (any number of columns) |
+| `<br>` inside a cell | New paragraph within the cell |
+
+**Text alignment** (HTML tags, single- or multi-line):
+
+```markdown
+<center>centered text</center>
+<div align="right">right-aligned</div>
+<div align="justify">justified paragraph…</div>
+```
+
+**Soft line break:** end a line with **two trailing spaces** to break within the same paragraph.
+
+**Custom styles** (issue #66) — remap built-in styles or apply an ad-hoc one:
+
+```markdown
+<!-- style: Callout -->
+This paragraph uses the "Callout" style from your template.
+```
+
+The `<!-- style: Name -->` directive applies a style to the next block only (every item of a list, or the table). Unknown styles fall back to the default with a warning. To remap styles globally or per template, see [Custom Templates](#-custom-templates).
+
+</details>
+
+<details>
+<summary><strong>📈 Excel Markdown — full syntax</strong></summary>
+
+**Tool parameters** (`create_excel_from_markdown`):
+
+| Parameter | Description |
+|-----------|-------------|
+| `markdown_content` | Markdown containing one or more tables |
+| `auto_filter` | Apply Excel auto-filter (dropdown filters) to each table |
+| `file_name` | Output filename without extension |
+
+**Sheets & tables:**
+
+| Syntax | Effect |
+|--------|--------|
+| `\| A \| B \|` + `\|---\|---\|` | A table becomes a block of cells |
+| `## Sheet: Name` | Start a new worksheet named `Name` |
+| `# Heading` above a table | Used as a title row above the table |
+
+**Formulas & references** (put a formula in any cell, starting with `=`):
+
+| Reference form | Meaning |
+|----------------|---------|
+| `=A1`, `=SUM(A1:A5)` | Standard Excel references and functions |
+| `[offset]` | Row-relative reference within the column (e.g. `=[−1]*1.2`) |
+| `T1.B[0]` | Table 1, column B, data row 0 |
+| `T1.SUM(B[0]:E[0])` | Function over a table range |
+| `SheetName!T1.B[0]` | Cross-sheet table reference |
+
+**Column directives** — place on the line directly above a table:
+
+| Directive | Effect |
+|-----------|--------|
+| `<!-- freeze -->` | Freeze panes below the header row (header stays visible when scrolling) |
+| `<!-- types: text, currency:$, date, bool, number, percent -->` | Force per-column data types (one entry per column; blank = auto). Options: `text` (preserves leading zeros), `currency:<symbol>` (`$ € £ ¥ Kč zł kr CHF R$ ₹`), `date` / `date:<format>`, `bool`, `number` / `number:<format>`, `percent` (`50%` → `0.5`) |
+
+Column alignment via the `:---:` separator syntax is honored, and inline `**bold**` / `*italic*` in cells is applied as cell formatting.
+
+</details>
+
+---
+
 ## 🎨 Custom Templates
 
 You can customize the look of generated documents by providing your own templates.
@@ -346,7 +471,8 @@ Subject: {{subject}}
 - Each template becomes a separate AI tool at startup
 - Placeholders can be in the document body, tables, headers, and footers
 - Placeholder values support full Markdown (bold, italic, lists, headings…)
-- The original font from the placeholder location is preserved
+- The placeholder's own formatting — font, size, colour, **bold, italic, underline, highlight** — is captured and applied to the replacement text (markdown in the value, e.g. `**bold**`, still wins where it sets formatting)
+- Formatting of the surrounding text in the same paragraph (before/after the placeholder) is preserved
 
 </details>
 
@@ -415,6 +541,98 @@ Accounting-style negative notation in input values is recognised: `($50)` parses
 **Percent format.** The default percent format is `0.0%` (one decimal) so `50.5%` displays as `50.5%` rather than being rounded to `51%`. Use `percent:integer` if you want no decimals (`0%`).
 
 **Default font.** Set a font family for every cell with the `default_font` parameter or the `XLSX_DEFAULT_FONT` env var. Inline `` `code` `` formatting (Courier New) always overrides.
+
+</details>
+
+<summary><strong>🎨 Custom style mapping (use your own style names)</strong></summary>
+
+If your template defines styles under **different names** than the built-ins above, map them in `config/docx_templates.yaml` so rendered Markdown uses them — no need to rename styles in Word.
+
+A top-level `style_mapping:` applies to every document; each template may add its own `style_mapping:` which overrides the global one for that template.
+
+```yaml
+# config/docx_templates.yaml
+
+# Global — applies to all conversions:
+style_mapping:
+  heading_1: "Brand Title"
+  list_number: "Brand Numbers"
+  quote: "Brand Quote"
+  table: "Brand Table"
+
+templates:
+  - name: formal_letter
+    docx_path: letter_template.docx
+    # Per-template override (wins over the global mapping):
+    style_mapping:
+      quote: "Letter Quote"
+    args: [ ... ]
+```
+
+**Recognized keys:** `heading_1`…`heading_6`, `list_number` / `_2` / `_3`, `list_bullet` / `_2` / `_3`, `quote`, `table`, `normal`, `code` (style for fenced code blocks).
+
+**Ad-hoc style tag:** to apply any style to a single block without a mapping, put a directive directly above it:
+
+```markdown
+<!-- style: Callout -->
+This paragraph uses the "Callout" style.
+```
+
+Unknown style names fall back to the document default (with a logged warning) rather than failing the document.
+
+</details>
+
+---
+
+## 🖥️ Template Admin UI (optional)
+
+Prefer clicking over editing YAML? Enable the built-in **template-admin UI** to
+create and manage dynamic **Word** and **email** templates from your browser —
+no YAML, no restart.
+
+<details>
+<summary><strong>How to enable and use it</strong></summary>
+
+**1.** Set these in your `.env`:
+
+```
+ADMIN_ENABLED=true
+ADMIN_PASSWORD=choose-a-strong-password   # falls back to API_KEY if omitted
+# ADMIN_PATH=/admin                        # optional, this is the default
+```
+
+**2.** Start the server as usual. The admin UI is served from the **same port**
+as the MCP endpoint:
+
+```
+http://localhost:8958/admin
+```
+
+**3.** Log in with your `ADMIN_PASSWORD`, then:
+
+- **Upload** a Word `.docx` (or email `.html`) that contains `{{placeholders}}`
+  (and optionally `{{#if flag}} … {{/if}}` conditionals). Author it in real Word
+  — full fidelity is preserved.
+- The UI **auto-detects** every placeholder and conditional and pre-builds the
+  argument form. Fill in each argument's type, whether it's required, a default,
+  and the description the AI sees.
+- **Preview** with sample values (generates a real file; never uploaded anywhere).
+- **Save** — the template becomes a live MCP tool **immediately**, no restart.
+- **Edit** later — adjust arguments, or **Replace document** to upload a new
+  version and re-scan it for placeholders (existing arguments are kept).
+- **Status** page — see live tool counts, per-template usage (calls/errors/last
+  used this session), and a recent activity & error log (filterable to
+  warnings/errors).
+
+**How it's stored:** the UI writes one file per template into
+`config/docx_templates.d/` or `config/email_templates.d/` (plus the asset into
+`custom_templates/`). Your hand-written master `config/*.yaml` files are never
+modified — UI templates are simply merged on top of them at load time.
+
+> **Single-instance note:** live, no-restart registration assumes one server
+> instance owns the template files (the standard docker-compose setup). For a
+> multi-replica deployment, put the template files on shared storage and roll
+> the pods to pick up changes.
 
 </details>
 

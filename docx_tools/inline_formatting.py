@@ -5,7 +5,9 @@ import logging
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.opc.constants import RELATIONSHIP_TYPE
-from .patterns import _INLINE_FORMAT_RE, _LINK_RE, _ESCAPE_RE, _BR_RE
+from .patterns import (
+    _INLINE_FORMAT_RE, _LINK_RE, _ESCAPE_RE, _BR_RE, normalize_escaped_newlines,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +98,9 @@ def parse_inline_formatting(text, paragraph, bold=False, italic=False):
     for entity, char in _SAFE_HTML_ENTITIES:
         if entity in text:
             text = text.replace(entity, char)
+    # Treat a literal "\n"/"\r\n" (backslash+n typed as text, not a real newline)
+    # as a genuine newline so it renders as a line break instead of a stray "n".
+    text = normalize_escaped_newlines(text)
     # Normalize <br>, <br/>, <br /> tags to the two-space soft-break marker
     # so they produce line breaks (common in table cells where real newlines
     # would break the row).

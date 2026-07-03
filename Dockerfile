@@ -4,7 +4,9 @@
 # If you need more help, visit the Dockerfile reference guide at
 # https://docs.docker.com/go/dockerfile-reference/
 
-ARG PYTHON_VERSION=3.12.8
+# Roll with the latest 3.12 patch so the base ships current Alpine packages.
+# Pin by digest here if you need fully reproducible builds.
+ARG PYTHON_VERSION=3.12
 
 # =============================================================================
 # Stage 1: Builder - Install dependencies
@@ -16,6 +18,9 @@ ARG PYTHON_VERSION=3.12.8
 # wheels install directly with no build step, yielding faster builds
 # and a smaller final image.
 FROM python:${PYTHON_VERSION}-slim AS builder
+
+# Patch base OS packages (openssl, musl, xz, sqlite, …) to the latest available.
+RUN apk upgrade --no-cache
 
 # Prevents Python from writing pyc files.
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -38,6 +43,10 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # Stage 2: Runtime - Final lean image
 # =============================================================================
 FROM python:${PYTHON_VERSION}-slim AS runtime
+
+# Patch base OS packages in the SHIPPED image. This is the stage that matters for
+# the scanned CVEs (openssl/musl/xz/sqlite); only /opt/venv is copied from builder.
+RUN apk upgrade --no-cache
 
 # Prevents Python from writing pyc files.
 ENV PYTHONDONTWRITEBYTECODE=1

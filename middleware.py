@@ -83,7 +83,10 @@ class ApiKeyAuthMiddleware(Middleware):
     # Middleware hook
     # ------------------------------------------------------------------
     async def on_request(self, context: MiddlewareContext, call_next):
-        headers = get_http_headers() or {}
+        # get_http_headers() strips "authorization" by default; include= opts it
+        # back in so both Bearer and plain-token Authorization requests can
+        # authenticate (without this, only x-api-key would ever be seen).
+        headers = get_http_headers(include={"authorization"}) or {}
         api_key = self._extract_key(headers)
 
         if api_key is None or not secrets.compare_digest(api_key, self.expected_key):

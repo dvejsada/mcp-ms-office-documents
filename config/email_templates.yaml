@@ -1,0 +1,89 @@
+# =============================================================================
+# Dynamic Email Template Configuration
+# =============================================================================
+#
+# Each entry under `templates:` is registered at startup as its own MCP tool
+# that generates an HTML email draft (.eml) from a Mustache HTML template.
+#
+# How it works
+# ------------
+#   1. `name`        becomes the MCP tool name (AI calls it by this name).
+#   2. `html_path`   is a FILENAME ONLY (no directories). It is resolved from
+#                    custom_templates/ first, then default_templates/ (and the
+#                    matching /app/* paths in the container).
+#   3. `args`        become typed tool parameters that fill the {{placeholders}}
+#                    in the HTML template.
+#
+# Placeholder syntax in the HTML file (Mustache / pystache):
+#   {{name}}                  - value with HTML escaped
+#   {{{name}}}                - raw HTML inserted as-is (use for rich body content)
+#   {{#name}} ... {{/name}}   - section shown only when `name` is non-empty
+#
+# Standard fields added automatically to EVERY template (do not redeclare):
+#   subject (required), to, cc, bcc
+#
+# To customise: copy the referenced .html into custom_templates/ under the same
+# filename and edit it there — the custom copy wins over the default.
+# =============================================================================
+
+templates:
+  # Example: a branded broadcast / announcement email.
+  # Registered as the MCP tool `bu_broadcast_email_style_1`.
+  - name: bu_broadcast_email_style_1
+    description: |
+      Generate a branded broadcast/announcement email draft (.eml).
+      Use for newsletters, product announcements, or company-wide notices.
+      The `body` argument accepts raw HTML (paragraphs, lists, links).
+    html_path: broadcast_email_style_1.html  # resolved from custom_/default_templates
+    annotations:
+      title: Broadcast Email (Style 1)
+    args:
+      - name: headline
+        type: string
+        description: Large title shown at the top of the email body.
+        required: true
+      - name: greeting
+        type: string
+        description: Salutation line, e.g. "Hello everyone".
+        required: false
+        default: "Hello,"
+      - name: intro
+        type: string
+        description: Optional short introductory sentence above the main body.
+        required: false
+        default: ""
+      - name: body
+        type: string
+        description: >
+          Main email content as HTML (e.g. "<p>...</p><ul><li>...</li></ul>").
+          Inserted raw, so include your own paragraph/list tags.
+        required: true
+      - name: cta_label
+        type: string
+        description: Text for the call-to-action button (e.g. "Read more").
+        required: false
+        default: ""
+      - name: cta_url
+        type: string
+        description: URL for the call-to-action button. The button only appears when this is set.
+        required: false
+        default: ""
+      - name: signoff
+        type: string
+        description: Closing line, e.g. "Best regards,".
+        required: false
+        default: "Best regards,"
+      - name: sender_name
+        type: string
+        description: Name shown under the sign-off.
+        required: true
+      - name: company_name
+        type: string
+        description: Optional brand/company line shown in the footer.
+        required: false
+        default: ""
+      - name: language
+        type: string
+        description: HTML language code for the message (e.g. "en", "cs").
+        required: false
+        default: "en"

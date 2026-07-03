@@ -12,10 +12,15 @@ from .patterns import (
     UNORDERED_LIST_CAPTURE_PATTERN,
     _ALIGN_INLINE_RE,
     _ALIGN_OPEN_RE,
-    _ALIGN_CLOSE_RE,
 )
 from .inline_formatting import parse_inline_formatting
 from .patterns import _BR_RE
+from .numbering import (
+    resolve_ordered_abstract_num_id,
+    new_restarted_num,
+    apply_numbering,
+)
+from .style_map import apply_style
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +104,8 @@ def _remove_table_borders(table):
         tblPr.remove(existing)
     tblPr.append(borders)
 
-def add_table_to_doc(table_data, doc, col_alignments=None, borderless=False, col_widths=None):
+def add_table_to_doc(table_data, doc, col_alignments=None, borderless=False,
+                     col_widths=None, table_style='Table Grid'):
     """Add table data to Word document.
     Args:
         table_data: List of rows, each a list of cell text strings.
@@ -108,6 +114,8 @@ def add_table_to_doc(table_data, doc, col_alignments=None, borderless=False, col
         borderless: If True, remove all table borders (invisible table).
         col_widths: Optional list of proportional width values per column.
             Values are normalized to sum to 100% of available page width.
+        table_style: Word table style name to apply (falls back to the document
+            default if the named style is missing).
     Returns the created ``Table`` object, or ``None`` when the table could
     not be created (empty data or exception).
     """
@@ -117,14 +125,10 @@ def add_table_to_doc(table_data, doc, col_alignments=None, borderless=False, col
     cols = max(len(row) for row in table_data) if table_data else 0
     try:
         word_table = doc.add_table(rows=rows, cols=cols)
-        word_table.style = 'Table Grid'
-    except Exception as e:
-        logger.warning("Failed to create table with 'Table Grid' style, using default: %s", e)
-        try:
-            word_table = doc.add_table(rows=rows, cols=cols)
-        except Exception as e2:
-            logger.error("Failed to create table: %s", e2, exc_info=True)
-            return None
+    except Exception as e2:
+        logger.error("Failed to create table: %s", e2, exc_info=True)
+        return None
+    apply_style(word_table, table_style, fallback=None)
     if borderless:
         _remove_table_borders(word_table)
     # Apply column widths if specified
@@ -159,16 +163,31 @@ def add_table_to_doc(table_data, doc, col_alignments=None, borderless=False, col
 # Lists
 # ---------------------------------------------------------------------------
 def process_list_items(lines, start_idx, doc, is_ordered=False, level=0,
-                       return_elements=False):
+                       return_elements=False, number_styles=None, bullet_styles=None,
+                       base_indent=None, ordered_run=None):
     """Process markdown list items with proper Word numbering.
     When *return_elements* is True the created paragraph XML elements are
     removed from the document body and returned so the caller can re-insert
     them elsewhere (used by the template placeholder machinery).
+    *number_styles*/*bullet_styles* override the per-level Word style names
+    (see :class:`docx_tools.style_map.StyleMap`); they default to the built-ins.
+
+    Nesting is determined by *relative* indentation: items sharing the first
+    item's indent (*base_indent*) are siblings at *level*; a more-indented item
+    begins a child list one level deeper. This makes any consistent indent unit
+    work (2, 3 or 4 spaces, or a tab) rather than assuming a fixed step.
+
+    Ordered-list numbering restarts only when the explicit number ``1`` reappears
+    at a level — NOT on any backward jump. ``1, 2, 1`` restarts; ``3, 4, 3`` does
+    not (Word renders ``3, 4, 5``). A list starting at *N* honours that as the
+    first value via ``startOverride``.
     Returns:
         Tuple of (next_line_index, list_of_elements | None).
     """
-    bullet_styles = ['List Bullet', 'List Bullet 2', 'List Bullet 3']
-    number_styles = ['List Number', 'List Number 2', 'List Number 3']
+    if bullet_styles is None:
+        bullet_styles = ('List Bullet', 'List Bullet 2', 'List Bullet 3')
+    if number_styles is None:
+        number_styles = ('List Number', 'List Number 2', 'List Number 3')
     style_array = number_styles if is_ordered else bullet_styles
     style = style_array[min(level, len(style_array) - 1)]
     elements = [] if return_elements else None
@@ -177,19 +196,51 @@ def process_list_items(lines, start_idx, doc, is_ordered=False, level=0,
     list_capture_pattern = (
         ORDERED_LIST_CAPTURE_PATTERN if is_ordered else UNORDERED_LIST_CAPTURE_PATTERN
     )
+    # Ordered-list numbering restart state (see docx_tools/numbering.py). Each logical
+    # list gets its own <w:num> instance so it counts independently; a new instance is
+    # started for the first item and whenever "1." reappears at this level.
+    abstract_num_id = None
+    numbering_root = None
+    num_resolved = False
+    current_num_id = None
+    items_emitted = 0
+    last_item_number = None  # last top-level ordered number, to extend ordered_run
     while i < n:
         original_line = lines[i]
         stripped_left = original_line.lstrip()
         indent = len(original_line) - len(stripped_left)
         line = stripped_left.rstrip()
-        current_level = indent // 3
-        if current_level != level:
+        if base_indent is None:
+            base_indent = indent  # first item defines this level's indent
+        # Items more/less indented than this level are handled by the caller
+        # (a child list via the look-ahead below, or an ancestor on dedent).
+        if indent != base_indent:
             break
         list_match = list_capture_pattern.match(line)
         if not list_match:
             break
-        paragraph = doc.add_paragraph(style=style)
-        parse_inline_formatting(list_match.group(1), paragraph)
+        if is_ordered:
+            item_number = int(list_match.group(1))
+            item_text = list_match.group(2)
+        else:
+            item_number = None
+            item_text = list_match.group(1)
+        paragraph = doc.add_paragraph()
+        apply_style(paragraph, style, fallback='Normal')
+        if is_ordered:
+            if current_num_id is None or (item_number == 1 and items_emitted > 0):
+                if not num_resolved:
+                    abstract_num_id, numbering_root = resolve_ordered_abstract_num_id(doc)
+                    num_resolved = True
+                if abstract_num_id is not None:
+                    current_num_id = new_restarted_num(
+                        numbering_root, abstract_num_id, level, start=item_number
+                    )
+            if current_num_id is not None:
+                apply_numbering(paragraph, current_num_id, level)
+            last_item_number = item_number
+        parse_inline_formatting(item_text, paragraph)
+        items_emitted += 1
         if return_elements:
             elements.append(paragraph._p)
             doc._body._body.remove(paragraph._p)
@@ -203,13 +254,14 @@ def process_list_items(lines, start_idx, doc, is_ordered=False, level=0,
                 i += 1
                 continue
             next_indent = len(next_original) - len(next_stripped_left)
-            next_level = next_indent // 3
-            if next_level > level:
+            if next_indent > base_indent:
                 is_nested_ordered = bool(ORDERED_LIST_PATTERN.match(next_line))
                 is_nested_unordered = bool(UNORDERED_LIST_PATTERN.match(next_line))
                 if is_nested_ordered or is_nested_unordered:
                     i, nested = process_list_items(
-                        lines, i, doc, is_nested_ordered, next_level, return_elements
+                        lines, i, doc, is_nested_ordered, level + 1, return_elements,
+                        number_styles=number_styles, bullet_styles=bullet_styles,
+                        base_indent=next_indent,
                     )
                     if return_elements and nested:
                         elements.extend(nested)
@@ -232,6 +284,10 @@ def process_list_items(lines, start_idx, doc, is_ordered=False, level=0,
             elements.append(paragraph._p)
             doc._body._body.remove(paragraph._p)
         i = start_idx + 1
+    # Record where this top-level ordered list left off so a later sibling list
+    # (e.g. after a heading) can continue its numbering instead of restarting.
+    if ordered_run is not None and is_ordered and level == 0 and last_item_number is not None:
+        ordered_run['next'] = last_item_number + 1
     return i, elements
 # ---------------------------------------------------------------------------
 # Page break / horizontal line
@@ -292,25 +348,3 @@ def detect_alignment(line):
         align = ALIGNMENT_MAP.get((m.group(1) or 'center').lower(), WD_ALIGN_PARAGRAPH.CENTER)
         return None, align
     return None
-
-
-def process_alignment_block(lines, start_idx, doc, alignment, return_elements=False):
-    """Process lines inside a multi-line alignment block."""
-    elements = [] if return_elements else None
-    i = start_idx
-    while i < len(lines):
-        stripped = lines[i].strip()
-        if _ALIGN_CLOSE_RE.match(stripped):
-            i += 1
-            break
-        if not stripped:
-            i += 1
-            continue
-        para = doc.add_paragraph()
-        para.alignment = alignment
-        parse_inline_formatting(stripped, para)
-        if return_elements:
-            elements.append(para._p)
-            doc._body._body.remove(para._p)
-        i += 1
-    return i, elements

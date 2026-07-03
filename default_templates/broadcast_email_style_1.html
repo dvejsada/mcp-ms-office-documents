@@ -1,0 +1,56 @@
+<!--
+  Broadcast / announcement email template (Mustache).
+
+  This is an EXAMPLE template wired up by config/email_templates.yaml as the
+  `bu_broadcast_email_style_1` tool. Copy it to custom_templates/ (same filename)
+  to override it without touching the repo default.
+
+  Placeholders:
+    {{subject}}                     - email subject (provided automatically)
+    {{language}}                    - html lang attribute (e.g. "en")
+    {{headline}}                    - large title shown at the top of the body
+    {{greeting}}                    - salutation line, e.g. "Hello everyone"
+    {{intro}}                       - short introductory sentence (optional)
+    {{{body}}}                      - main content; TRIPLE braces = raw HTML allowed
+    {{#cta_url}} ... {{/cta_url}}   - call-to-action button, only rendered when a URL is given
+    {{signoff}} / {{sender_name}}   - closing line and sender
+    {{company_name}}                - footer brand line (optional)
+
+  Note: {{placeholder}} escapes HTML; {{{placeholder}}} inserts raw HTML.
+-->
+<!DOCTYPE html>
+<html lang="{{language}}">
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <meta http-equiv="Content-Language" content="{{language}}" />
+    <title>{{subject}}</title>
+    <style>
+        body { font-family: Arial, sans-serif; font-size: 11pt; color: #1a1a1a; line-height: 1.5; margin: 0; padding: 0; background: #f4f5f7; }
+        .wrapper { max-width: 620px; margin: 0 auto; padding: 24px; }
+        .card { background: #ffffff; border-radius: 8px; padding: 32px; }
+        .headline { font-size: 20pt; font-weight: bold; color: #001489; margin: 0 0 16px; }
+        .greeting { margin: 0 0 12px; }
+        .intro { color: #444; margin: 0 0 16px; }
+        .body { margin: 0 0 24px; }
+        .cta { text-align: center; margin: 24px 0; }
+        .cta a { display: inline-block; background: #001489; color: #ffffff; text-decoration: none; padding: 12px 28px; border-radius: 6px; font-weight: bold; }
+        .signoff { margin: 24px 0 0; }
+        .footer { text-align: center; color: #8a8f98; font-size: 9pt; margin-top: 20px; }
+    </style>
+</head>
+<body lang="{{language}}">
+    <div class="wrapper">
+        <div class="card">
+            <h1 class="headline">{{headline}}</h1>
+            <p class="greeting">{{greeting}}</p>
+            {{#intro}}<p class="intro">{{intro}}</p>{{/intro}}
+            <div class="body">{{{body}}}</div>
+            {{#cta_url}}
+            <div class="cta"><a href="{{cta_url}}">{{cta_label}}</a></div>
+            {{/cta_url}}
+            <p class="signoff">{{signoff}}<br/>{{sender_name}}</p>
+        </div>
+        {{#company_name}}<p class="footer">{{company_name}}</p>{{/company_name}}
+    </div>
+</body>
+</html>

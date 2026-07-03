@@ -732,6 +732,33 @@ class TestHelpersRegression:
         bold_runs = [r for r in para.runs if r.bold and r.text.strip()]
         assert len(bold_runs) >= 2
 
+    def test_nested_emphasis_at_triple_star_boundary(self):
+        """REGRESSION: nested *italic* whose close abuts the bold close (***).
+
+        ``**bold with *nested italic***`` previously left a literal ``*`` and
+        mis-attributed the rest of the line. The inner italic should render as
+        bold+italic with no stray asterisks.
+        """
+        doc = Document()
+        para = doc.add_paragraph()
+        parse_inline_formatting(
+            "**bold with *nested italic*** or *italic with **nested bold***", para
+        )
+
+        assert "*" not in para.text, f"stray asterisk in {para.text!r}"
+        # The two nested fragments are both bold AND italic.
+        bi = {r.text for r in para.runs if r.bold and r.italic}
+        assert "nested italic" in bi
+        assert "nested bold" in bi
+
+    def test_lone_star_inside_bold_stays_literal(self):
+        """A lone ``*`` inside bold (not a nested emphasis) is kept verbatim."""
+        doc = Document()
+        para = doc.add_paragraph()
+        parse_inline_formatting("**bold with a * lone star**", para)
+        assert para.text == "bold with a * lone star"
+        assert all(r.bold for r in para.runs if r.text.strip())
+
 
 # =============================================================================
 # Comprehensive Visual Test
@@ -766,6 +793,10 @@ class TestVisualInspection:
         - Escaped characters
         - Unicode and special characters
         - Images (with fallback for invalid URL)
+        - Fenced code blocks (``` / ~~~)
+        - Flexible list indentation (2/3/4-space)
+        - Numbered-list restart
+        - Table directives (borderless, widths) and the per-block style tag
         """
         markdown = (
             "# Comprehensive Visual Inspection Document\n"
@@ -1054,6 +1085,98 @@ class TestVisualInspection:
             "\n"
             "***\n"
             "\n"
+            "## 19. Fenced Code Blocks\n"
+            "\n"
+            "Content inside fences is verbatim and monospace; markdown markers like #, -, "
+            "and backticks are NOT interpreted:\n"
+            "\n"
+            "```python\n"
+            "def greet(name):\n"
+            "    # this stays a comment, not a heading\n"
+            "    items = ['- not a bullet', '1. not a list']\n"
+            "    return f\"Hello, {name}!\"\n"
+            "\n"
+            "    # blank line above is preserved\n"
+            "```\n"
+            "\n"
+            "Tilde fences work too:\n"
+            "\n"
+            "~~~\n"
+            "plain text with `backticks` kept literal\n"
+            "~~~\n"
+            "\n"
+            "***\n"
+            "\n"
+            "## 20. Flexible List Indentation\n"
+            "\n"
+            "Nesting works with 2-, 3- or 4-space indents (and tabs). Two-space nesting:\n"
+            "\n"
+            "- Level one\n"
+            "  - Level two (2-space)\n"
+            "    - Level three (2-space)\n"
+            "- Back to level one\n"
+            "\n"
+            "Four-space nesting:\n"
+            "\n"
+            "1. First\n"
+            "    1. Nested (4-space)\n"
+            "    2. Nested again\n"
+            "2. Second\n"
+            "\n"
+            "***\n"
+            "\n"
+            "## 21. Numbered List Restart\n"
+            "\n"
+            "Each list that begins again at 1 restarts numbering (these should read 1,2,3 "
+            "then 1,2 — not 1..5):\n"
+            "\n"
+            "1. First list, item one\n"
+            "2. First list, item two\n"
+            "3. First list, item three\n"
+            "\n"
+            "1. Second list, item one (restarts at 1)\n"
+            "2. Second list, item two\n"
+            "\n"
+            "***\n"
+            "\n"
+            "## 22. Table Directives\n"
+            "\n"
+            "Borderless table (no visible borders):\n"
+            "\n"
+            "<!-- borderless -->\n"
+            "| Label | Value |\n"
+            "|-------|-------|\n"
+            "| Name | Acme Corp |\n"
+            "| Date | 2026-06-19 |\n"
+            "\n"
+            "Proportional column widths (20% / 80%):\n"
+            "\n"
+            "<!-- widths: 20 80 -->\n"
+            "| Term | Definition |\n"
+            "|------|------------|\n"
+            "| MCP | Model Context Protocol |\n"
+            "| DOCX | Office Open XML word-processing format |\n"
+            "\n"
+            "***\n"
+            "\n"
+            "## 23. Per-block Style Tag\n"
+            "\n"
+            "The <!-- style: Name --> directive applies a named template style to the next "
+            "block only. Using styles present in the default template:\n"
+            "\n"
+            "<!-- style: Subtitle -->\n"
+            "This paragraph uses the Subtitle style.\n"
+            "\n"
+            "<!-- style: Intense Quote -->\n"
+            "This paragraph uses the Intense Quote style.\n"
+            "\n"
+            "An unknown style name falls back to the default without failing:\n"
+            "\n"
+            "<!-- style: No Such Style -->\n"
+            "This paragraph falls back to Normal.\n"
+            "\n"
+            "***\n"
+            "\n"
             "## Conclusion\n"
             "\n"
             "This document contains **all** supported markdown elements:\n"
@@ -1064,6 +1187,8 @@ class TestVisualInspection:
             "- Page breaks (---) and horizontal lines (***)\n"
             "- Text alignment (center, right, justify, left)\n"
             "- Line breaks, escaped characters, Unicode, images\n"
+            "- Fenced code blocks, flexible list indentation, numbered-list restart\n"
+            "- Table directives (borderless, widths) and the per-block style tag\n"
             "\n"
             "If you can read this and all formatting above appears correct, the markdown-to-Word\n"
             "conversion is working properly! 🎉\n"
@@ -1587,6 +1712,48 @@ class TestTextAlignment:
                             if p.alignment == WD_ALIGN_PARAGRAPH.RIGHT
                             and p.text.strip()]
         assert len(right_paragraphs) >= 2
+
+    def test_heading_inside_center_block(self):
+        """A heading inside a <center> block is a real heading (aligned), not
+        literal '#' text."""
+        markdown = "<center>\n# Centered Title\n</center>"
+        doc = save_test_document(markdown, "align_heading_center.docx")
+        match = [p for p in doc.paragraphs if p.text.strip() == "Centered Title"]
+        assert match, "heading text should not carry literal '#' marks"
+        assert match[0].style.name == "Heading 1"
+        assert match[0].alignment == WD_ALIGN_PARAGRAPH.CENTER
+
+    def test_heading_inside_div_right_block(self):
+        """A heading inside a <div align="right"> block keeps its style and the
+        block's alignment."""
+        markdown = '<div align="right">\n## Right Heading\n</div>'
+        doc = save_test_document(markdown, "align_heading_right.docx")
+        match = [p for p in doc.paragraphs if p.text.strip() == "Right Heading"]
+        assert match
+        assert match[0].style.name == "Heading 2"
+        assert match[0].alignment == WD_ALIGN_PARAGRAPH.RIGHT
+
+    def test_inline_center_wrapping_heading(self):
+        """The single-line form <center># Heading</center> also yields a real
+        heading rather than literal text."""
+        markdown = "<center># Inline Heading</center>"
+        doc = save_test_document(markdown, "align_heading_inline.docx")
+        match = [p for p in doc.paragraphs if p.text.strip() == "Inline Heading"]
+        assert match
+        assert match[0].style.name == "Heading 1"
+        assert match[0].alignment == WD_ALIGN_PARAGRAPH.CENTER
+
+    def test_list_inside_center_block(self):
+        """List items inside an alignment block are real list paragraphs, aligned
+        — the '#'/'-' markers are not emitted as literal text."""
+        markdown = "<center>\n- one\n- two\n</center>"
+        doc = save_test_document(markdown, "align_list_center.docx")
+        items = [p for p in doc.paragraphs
+                 if p.text.strip() in ("one", "two")]
+        assert len(items) == 2
+        for p in items:
+            assert "Bullet" in p.style.name
+            assert p.alignment == WD_ALIGN_PARAGRAPH.CENTER
 
 
 # =============================================================================

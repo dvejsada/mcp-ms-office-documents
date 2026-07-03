@@ -99,52 +99,44 @@ async def health_live(request: Request) -> PlainTextResponse:
     """Liveness probe — returns 200 OK while the event loop is responsive."""
     return PlainTextResponse("alive", status_code=200)
 
-# Look for dynamic email templates in production and local locations.
-# Production (container): /app/config/email_templates.yaml
-# Local development: <project_root>/config/email_templates.yaml
-APP_CONFIG_PATH = Path("/app/config") / "email_templates.yaml"
-LOCAL_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "email_templates.yaml"
+# Resolve the config directory: production mount (/app/config) is preferred,
+# otherwise the in-project config/ directory for local development.
+_APP_CONFIG_DIR = Path("/app/config")
+_LOCAL_CONFIG_DIR = Path(__file__).resolve().parent / "config"
+_CONFIG_DIR = _APP_CONFIG_DIR if _APP_CONFIG_DIR.exists() else _LOCAL_CONFIG_DIR
 
-# Prefer the production path when present, otherwise fall back to local config.
-_primary_yaml = None
-for candidate in (APP_CONFIG_PATH, LOCAL_CONFIG_PATH):
-    if candidate.exists():
-        _primary_yaml = candidate
-        logger.info("[dynamic-email] Found email templates file: %s", candidate)
-        break
 
-if _primary_yaml:
+def _has_templates(master: Path, spec_subdir: str) -> bool:
+    """True if a master YAML or a UI-managed ``*.d`` directory is present.
+
+    The loaders merge both sources, so registration should run whenever EITHER
+    exists — including the case where the master YAML was never created but the
+    admin UI has written per-template files into ``<spec_subdir>``.
+    """
+    return master.is_file() or (master.parent / spec_subdir).is_dir()
+
+
+# Dynamic email templates: master config/email_templates.yaml merged with any
+# UI-managed per-template files in config/email_templates.d/.
+_email_yaml = _CONFIG_DIR / "email_templates.yaml"
+if _has_templates(_email_yaml, "email_templates.d"):
     try:
-        register_email_template_tools_from_yaml(mcp, _primary_yaml)
+        register_email_template_tools_from_yaml(mcp, _email_yaml)
     except Exception as e:
-        logger.exception("[dynamic-email] Failed to register email templates from %s: %s", _primary_yaml, e)
+        logger.exception("[dynamic-email] Failed to register email templates from %s: %s", _email_yaml, e)
 else:
-    logger.info(
-        "[dynamic-email] No dynamic email templates file found at /app/config/email_templates.yaml or config/email_templates.yaml - skipping"
-    )
+    logger.info("[dynamic-email] No email templates found under %s - skipping", _CONFIG_DIR)
 
-# Look for dynamic DOCX templates in production and local locations.
-# Production (container): /app/config/docx_templates.yaml
-# Local development: <project_root>/config/docx_templates.yaml
-APP_DOCX_CONFIG_PATH = Path("/app/config") / "docx_templates.yaml"
-LOCAL_DOCX_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "docx_templates.yaml"
-
-_docx_yaml = None
-for candidate in (APP_DOCX_CONFIG_PATH, LOCAL_DOCX_CONFIG_PATH):
-    if candidate.exists():
-        _docx_yaml = candidate
-        logger.info("[dynamic-docx] Found DOCX templates file: %s", candidate)
-        break
-
-if _docx_yaml:
+# Dynamic DOCX templates: master config/docx_templates.yaml merged with any
+# UI-managed per-template files in config/docx_templates.d/.
+_docx_yaml = _CONFIG_DIR / "docx_templates.yaml"
+if _has_templates(_docx_yaml, "docx_templates.d"):
     try:
         register_docx_template_tools_from_yaml(mcp, _docx_yaml)
     except Exception as e:
         logger.exception("[dynamic-docx] Failed to register DOCX templates from %s: %s", _docx_yaml, e)
 else:
-    logger.info(
-        "[dynamic-docx] No dynamic DOCX templates file found at /app/config/docx_templates.yaml or config/docx_templates.yaml - skipping"
-    )
+    logger.info("[dynamic-docx] No DOCX templates found under %s - skipping", _CONFIG_DIR)
 
 
 @mcp.tool(
@@ -181,7 +173,7 @@ async def create_excel_document(
 
 @mcp.tool(
     name="create_word_from_markdown",
-    description="Converts markdown content to a professionally formatted Word (.docx) document. Supports headings, lists, tables, images, block quotes, page breaks, horizontal lines, text alignment, and rich inline formatting.",
+    description="Converts markdown content to a professionally formatted Word (.docx) document. Supports headings, lists, tables, images, block quotes, page breaks, horizontal lines, text alignment, custom per-block styles, and rich inline formatting.",
     tags={"word", "document", "text", "legal", "contract"},
     annotations={"title": "Markdown to Word Converter"}
 )
@@ -191,15 +183,17 @@ async def create_word_document(
         "\n"
         "BLOCK ELEMENTS (each on its own line):\n"
         "- Headings: # H1, ## H2, ### H3, #### H4, ##### H5, ###### H6\n"
-        "- Unordered lists: - item (or * or +); nest with 3-space indent\n"
-        "- Ordered lists: 1. item, 2. item; nest with 3-space indent\n"
-        "- Tables: | H1 | H2 |\\n|---|---|\\n| C1 | C2 | (cells support inline formatting and <br> for new paragraph; use :---|:---:|---: in separator for left/center/right alignment)\n"
+        "- Unordered lists: - item (or * or +); nest by indenting child items (2-4 spaces or a tab)\n"
+        "- Ordered lists: 1. item, 2. item; nest by indenting child items. Numbering restarts automatically whenever a list begins again at 1.\n"
+        "- Tables: put each row on its own line — a header row, then a separator row (|---|---|), then data rows; cells support inline formatting and <br> for a new paragraph; use :---|:---:|---: in the separator for left/center/right alignment\n"
         "- Borderless table: add <!-- borderless --> on the line before the table (useful for bilingual/parallel layouts)\n"
         "- Column widths: add <!-- widths: 30 70 --> before the table (proportional values, any number of columns)\n"
         "- Block quotes: > text (supports inline formatting)\n"
         "- Page break: --- (three+ dashes alone on a line — starts new page)\n"
         "- Horizontal line: *** (three+ asterisks alone on a line — visual separator)\n"
         "- Images: ![alt text](url)\n"
+        "- Code blocks: fence with ``` (or ~~~) on their own lines; content is rendered verbatim in a monospace font and NOT parsed as markdown\n"
+        "- Custom style: put <!-- style: Style Name --> on the line directly before a block to render it with that Word style (applies to the next block only — every item of a list, or the table). Unknown styles fall back to the default.\n"
         "\n"
         "INLINE FORMATTING (usable in paragraphs, headings, lists, tables, quotes):\n"
         "- **bold**, *italic*, ***bold italic***\n"
@@ -213,10 +207,10 @@ async def create_word_document(
         "- Escaped literals: \\* \\** \\` to render *, **, ` without formatting\n"
         "\n"
         "TEXT ALIGNMENT (HTML tags):\n"
-        "- <center>text</center> or multi-line: <center>\\nline1\\nline2\\n</center>\n"
+        "- <center>text</center> for a single line; for multiple lines put <center> and </center> each on their own line with the content on the lines between\n"
         "- <div align=\"right|center|justify|left\">text</div> (single or multi-line)\n"
         "\n"
-        "LINE BREAKS: End a line with two trailing spaces for a soft break within the same paragraph.\n"
+        "LINE BREAKS: Use real newlines in the text — separate paragraphs/blocks with a blank line, and end a line with two trailing spaces for a soft break within the same paragraph. Do NOT type the two literal characters backslash-n to mean a newline.\n"
         "\n"
         "CONVENTIONS:\n"
         "- Do NOT confuse --- (page break) with *** (horizontal line).\n"
@@ -373,10 +367,31 @@ async def create_xml_document(
         raise ToolError(f"Error creating XML file: {e}")
 
 if __name__ == "__main__":
-    mcp.run(
-        transport="streamable-http",
-        host="0.0.0.0",
-        port=8958,
-        log_level=config.logging.mcp_level_str,
-        path="/mcp"
-    )
+    if config.admin.enabled:
+        # Admin UI enabled: serve the MCP endpoint and the FastHTML template-admin
+        # from a SINGLE ASGI process (uvicorn) so saving a template can register
+        # its MCP tool live, with no restart.
+        import uvicorn
+        from admin.app import build_combined_app
+
+        if not config.admin_password_effective:
+            logger.warning(
+                "[admin] ADMIN_ENABLED is set but neither ADMIN_PASSWORD nor API_KEY "
+                "is configured — the admin UI will reject all logins."
+            )
+        logger.info("[admin] Template-admin UI enabled at %s (port 8958)", config.admin.path)
+        uvicorn.run(
+            build_combined_app(mcp, config),
+            host="0.0.0.0",
+            port=8958,
+            log_level=config.logging.mcp_level_str,
+        )
+    else:
+        mcp.run(
+            transport="streamable-http",
+            host="0.0.0.0",
+            port=8958,
+            log_level=config.logging.mcp_level_str,
+            path="/mcp",
+            stateless_http=config.stateless_http,
+        )

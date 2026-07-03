@@ -7,6 +7,34 @@
 #   {{placeholder_name}} - replaced with the value (supports markdown formatting)
 #
 # =============================================================================
+# CONDITIONAL BLOCKS (optional)
+# =============================================================================
+# Wrap a range of body content between marker paragraphs so it is included only
+# when a boolean argument is set. Put each marker on its OWN paragraph (its whole
+# text must be just the marker), with the content to keep/drop in between:
+#
+#   {{#if include_clause}}        keep the block when include_clause is true
+#   This clause appears only when the argument is true.
+#   (any paragraphs, lists, page breaks or whole tables may go here)
+#   {{/if}}
+#
+#   {{^if include_clause}}        keep the block when include_clause is false
+#   Shown only when include_clause is false.
+#   {{/if}}
+#
+# Notes:
+#   - The condition name must match a template argument (declare it as type: bool).
+#     An unknown name keeps its content (so a typo never silently deletes a block).
+#   - The marker must be the paragraph's only text; spacing inside the braces is
+#     tolerated (e.g. "{{ #if flag }}"). Markers split across runs by Word are
+#     still detected. Blocks may be nested.
+#   - Granularity is block-level (whole paragraphs/tables between the markers).
+#     Conditionals inside table cells, headers and footers are not handled yet.
+#   - Unbalanced markers do not fail the document: a warning is logged, all
+#     content is kept, and the marker paragraphs are stripped. A {{/if}} pairs
+#     with the most recently opened block (nesting order), not by name.
+#
+# =============================================================================
 # WORD STYLES USED BY THE SYSTEM
 # =============================================================================
 # When creating custom templates, ensure these styles exist in your document.
@@ -23,11 +51,11 @@
 #
 # List styles (used for markdown lists):
 #   - List Bullet      (- item, * item, + item) - top level
-#   - List Bullet 2    (nested bullet, 3 spaces indent)
-#   - List Bullet 3    (deeply nested bullet, 6 spaces indent)
+#   - List Bullet 2    (nested bullet — indent child items one level)
+#   - List Bullet 3    (deeply nested bullet — indent two levels)
 #   - List Number      (1. item) - top level
-#   - List Number 2    (nested numbered, 3 spaces indent)
-#   - List Number 3    (deeply nested numbered, 6 spaces indent)
+#   - List Number 2    (nested numbered — indent child items one level)
+#   - List Number 3    (deeply nested numbered — indent two levels)
 #
 # Other styles:
 #   - Quote            (> blockquote text) - only in base tool
@@ -45,38 +73,120 @@
 # MARKDOWN FORMATTING SUPPORT
 # =============================================================================
 #
-# Inline formatting (works within any text):
-#   **bold text**     -> Bold text
-#   *italic text*     -> Italic text
-#   `code`            -> Monospace font (Courier New)
-#   [link text](url)  -> Clickable hyperlink
+# Inline formatting (works within any text — paragraphs, headings, lists, cells):
+#   **bold**            -> Bold            *italic*        -> Italic
+#   ***bold italic***   -> Bold + italic   ~~strike~~      -> Strikethrough
+#   __underline__       -> Underline       ==highlight==   -> Yellow highlight
+#   `code`              -> Monospace (Courier New)
+#   ^super^ (x^2^)      -> Superscript     ~sub~ (H~2~O)   -> Subscript
+#   [link text](url)    -> Clickable hyperlink
+#   \* \** \`           -> Escaped literals (render the marker as text)
+#   Nesting works, e.g. **bold with *italic* inside**.
 #
-# Block-level markdown (creates new paragraphs):
+# Block-level markdown (separate every block with a blank line):
 #   Headings:
-#     # Heading 1
-#     ## Heading 2
-#     ### Heading 3 (up to ###### Heading 6)
+#     # Heading 1  ...  up to  ###### Heading 6
 #
-#   Numbered lists:
+#   Numbered lists (numbering restarts automatically when a list begins at 1.):
 #     1. First item
 #     2. Second item
 #
-#   Bullet points:
+#   Bullet points (- , * or + ; nest by indenting child items — any
+#   consistent unit works: 2, 3 or 4 spaces, or a tab):
 #     - Item one
-#     - Item two
-#     * Also works with asterisk
-#     + Or plus sign
+#       - Sub item
 #
-#   Nested lists (use 3 spaces for indentation):
-#     - Main item
-#        - Sub item
-#        - Another sub item
+#   Block quotes:
+#     > Quoted text (uses the "Quote" style)
 #
-#   Tables (markdown table syntax):
+#   Fenced code blocks (rendered verbatim in a monospace font, not parsed):
+#     ```
+#     code stays exactly as written
+#     ```
+#
+#   Tables (Word "Table Grid" style; cells accept inline formatting):
 #     | Column 1 | Column 2 |
 #     |----------|----------|
 #     | Value 1  | Value 2  |
-#   Tables are converted to Word tables with "Table Grid" style.
+#     Alignment:      |:---|:---:|---:|   -> left / center / right
+#     Borderless:     put <!-- borderless --> on the line above the table
+#     Column widths:  put <!-- widths: 30 70 --> on the line above the table
+#     Cell newline:   use <br> inside a cell for a new paragraph
+#
+#   Images:           ![alt text](url)
+#   Page break:       --- (three+ dashes alone on a line — starts a new page)
+#   Horizontal line:  *** (three+ asterisks alone on a line)
+#   Text alignment:   <center>text</center>  or  <div align="right|center|justify|left">text</div>
+#
+# Note: in dynamic templates, block content (lists, headings, tables) is rendered
+# for body placeholders; placeholders inside table cells, headers and footers
+# receive inline formatting only.
+#
+# =============================================================================
+# LINE BREAKS — three cases (the same in the base tool and in templates)
+# =============================================================================
+#   New paragraph        -> leave a BLANK LINE between the blocks.
+#   Soft break / newline -> use <br>  (a line break inside the same paragraph,
+#                           e.g. an address block: Street<br>City).
+#                           Two trailing spaces also work but are invisible and
+#                           editors strip them — prefer <br>.
+#   Literal "\n"         -> NEVER. The two characters backslash-n are text, not a
+#                           newline; the model copies whatever it sees. (We now
+#                           convert a stray literal "\n" to a real newline rather
+#                           than corrupt it, but don't rely on or teach it.)
+#
+# Writing the `description:` of an argument:
+#   * Never put the two characters backslash-n in a description — the model will
+#     imitate it and send a literal "\n".
+#   * If a description shows a MULTI-LINE example, use a literal block scalar `|`
+#     (it preserves the line structure). Do NOT use `>` / `>-` — folded scalars
+#     join lines with spaces and destroy the example. Inside a `|` block you also
+#     cannot use `#` comments, so mark soft breaks with a visible <br>.
+#
+# =============================================================================
+# CUSTOM STYLE MAPPING (optional)
+# =============================================================================
+# By default the renderer applies the built-in Word style names listed above.
+# If your template defines styles under different names, map them here so the
+# rendered markdown picks them up — no need to rename styles in Word.
+#
+# A top-level `style_mapping:` (below) applies to every template. Each template
+# may also declare its own `style_mapping:` which overrides the global one for
+# that template only. Unknown style names fall back to the document default
+# (with a logged warning) rather than failing the document.
+#
+# Recognised keys (any subset):
+#   heading_1 … heading_6        replace Heading 1 … Heading 6
+#   list_number / _2 / _3        replace List Number / List Number 2 / 3
+#   list_bullet / _2 / _3        replace List Bullet / List Bullet 2 / 3
+#   quote                        replace Quote
+#   table                        replace Table Grid
+#   normal                       replace Normal
+#   code                         paragraph style for fenced code blocks (``` ... ```)
+#
+# Example (uncomment and adjust to your template's style names):
+# style_mapping:
+#   heading_1: "Brand Title"
+#   list_number: "Brand Numbers"
+#   quote: "Brand Quote"
+#   table: "Brand Table"
+#
+# ---------------------------------------------------------------------------
+# Ad-hoc style tag (inside markdown content)
+# ---------------------------------------------------------------------------
+# To apply any style by name to a single block — without adding it to the
+# mapping above — put a style directive on its own line directly before the
+# block. It applies to the next block only (every item of a list; the table):
+#
+#   <!-- style: Callout -->
+#   This paragraph uses the "Callout" style.
+#
+#   <!-- style: Highlights -->
+#   - first bullet
+#   - second bullet
+#
+# An unknown style name falls back to the document default (with a warning)
+# rather than failing the document.
 
 
 templates:
@@ -90,6 +200,10 @@ templates:
     docx_path: letter_template.docx  # Must be in custom_templates/ directory
     annotations:
       title: Formal Letter Generator
+    # Optional per-template style overrides (win over the global style_mapping):
+    # style_mapping:
+    #   list_number: "Letter Numbers"
+    #   quote: "Letter Quote"
     args:
       - name: recipient_name
         type: string
@@ -130,5 +244,68 @@ templates:
         description: Sender's job title or position
         required: false
         default: ""
+      # Example of a boolean flag driving a conditional block in the template.
+      # Wrap the optional content in the .docx with {{#if include_postscript}} ...
+      # {{/if}} to include it only when this is true.
+      # - name: include_postscript
+      #   type: bool
+      #   description: Include the postscript (P.S.) block.
+      #   required: false
+      #   default: false
+
+  # ===========================================================================
+  # Line-break demo: shows how to describe the three break cases to the model.
+  # Note every `description:` uses a literal block scalar `|` (preserves lines)
+  # and uses <br> for soft breaks — never a literal backslash-n.
+  # ===========================================================================
+  - name: letterhead_breaks_demo
+    description: |
+      DOCUMENTATION ONLY — reference example, not for real output. Illustrates the
+      three line-break cases in argument descriptions. Points at letter_template.docx
+      whose placeholders may not match these names, so treat it as a reference.
+    docx_path: letter_template.docx   # reuse any template that has the placeholders
+    annotations:
+      title: "Line-break demo (reference only)"
+    args:
+      # SOFT BREAK case: a multi-line block that stays ONE paragraph (use <br>).
+      - name: hlavicka
+        type: string
+        required: true
+        description: |
+          Document letterhead, several lines forming ONE block.
+          Put a <br> between lines (soft break — a line break inside one paragraph);
+          do NOT leave blank lines here, or it would split into paragraphs.
+          Example:
+          JUDr. Jan Novák, advokát<br>Jáchymova 26/2<br>110 00 Praha 1
+      # NEW PARAGRAPH case: prose where each paragraph is separate (blank line).
+      - name: text
+        type: string
+        required: true
+        description: |
+          Body text (Markdown). Break rules:
+          - New paragraph: leave a BLANK LINE between paragraphs.
+          - Line break inside a paragraph: use <br>.
+          - Numbered clauses: each item on its own line ("1. ...", "2. ...").
+          Never write the characters backslash-n. Example:
+          Vážený pane,
+
+          obracím se na Vás ve věci smluvní pokuty.
+
+          S pozdravem
+      # MIXED case: bold heading + soft-break list, all one paragraph.
+      - name: prilohy
+        type: string
+        required: false
+        default: " "   # a space keeps the placeholder from rendering as-is when omitted
+        description: |
+          Attachment list; if none, send a single space. Bold heading, each
+          attachment on its own line via <br>. Example:
+          **Přílohy:**<br>1. Plná moc<br>2. Výzva k zaplacení
+      - name: file_name
+        type: string
+        required: false
+        default: ""
+        description: |
+          Optional output filename (without the .docx extension).
 
 

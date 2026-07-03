@@ -327,6 +327,77 @@ class TestMarkdownFormatting:
 
 
 # =============================================================================
+# Alignment Directive Tests
+# =============================================================================
+
+class TestAlignmentDirectivesInPlaceholders:
+    """Alignment set in a value via <center>/<div align="..."> must survive the
+    placeholder-layout inheritance, even when the placeholder paragraph carries
+    its own paragraph properties (alignment/indent/spacing)."""
+
+    def _replace(self, placeholder_setup, value):
+        """Build a doc whose placeholder paragraph is configured by
+        *placeholder_setup*, replace ``{{body}}`` with *value*, return the doc."""
+        doc = Document()
+        para = doc.add_paragraph()
+        placeholder_setup(para)
+        para.add_run("{{body}}")
+        _replace_placeholders_in_document(doc, {"body": value})
+        return doc
+
+    def _aligned_text(self, doc):
+        return [(p.text, p.alignment) for p in doc.paragraphs if p.text.strip()]
+
+    def test_center_block_survives_left_placeholder(self):
+        """<center> wins over a placeholder paragraph explicitly left-aligned."""
+        doc = self._replace(
+            lambda p: setattr(p, "alignment", WD_ALIGN_PARAGRAPH.LEFT),
+            "<center>\nCentered line\n</center>",
+        )
+        result = self._aligned_text(doc)
+        assert ("Centered line", WD_ALIGN_PARAGRAPH.CENTER) in result
+
+    def test_div_right_survives_placeholder_with_spacing(self):
+        """<div align="right"> keeps RIGHT even though the placeholder paragraph
+        only set spacing (which still produces a <w:pPr> to inherit)."""
+        doc = self._replace(
+            lambda p: setattr(p.paragraph_format, "space_after", Pt(6)),
+            '<div align="right">\nRight-aligned text\n</div>',
+        )
+        result = self._aligned_text(doc)
+        assert ("Right-aligned text", WD_ALIGN_PARAGRAPH.RIGHT) in result
+
+    def test_center_value_with_following_prose_inherits_placeholder(self):
+        """The centered block keeps CENTER while plain prose after it still
+        inherits the placeholder paragraph's alignment (the layout feature)."""
+        doc = self._replace(
+            lambda p: setattr(p, "alignment", WD_ALIGN_PARAGRAPH.JUSTIFY),
+            "<center>Centered title</center>\nNormal body paragraph",
+        )
+        result = dict(self._aligned_text(doc))
+        assert result["Centered title"] == WD_ALIGN_PARAGRAPH.CENTER
+        assert result["Normal body paragraph"] == WD_ALIGN_PARAGRAPH.JUSTIFY
+
+    def test_heading_inside_center_block_renders_as_heading(self):
+        """A heading inside a <center> block in placeholder content becomes a
+        real heading (aligned), not literal '#' text."""
+        doc = self._replace(lambda p: None, "<center>\n# Centered Heading\n</center>")
+        match = [p for p in doc.paragraphs if p.text.strip() == "Centered Heading"]
+        assert match, "the '#' marks must not leak as literal text"
+        assert match[0].style.name == "Heading 1"
+        assert match[0].alignment == WD_ALIGN_PARAGRAPH.CENTER
+
+    def test_heading_inside_div_right_block_renders_as_heading(self):
+        """A heading inside a <div align="right"> block keeps its style and the
+        block's alignment."""
+        doc = self._replace(lambda p: None, '<div align="right">\n## Right Heading\n</div>')
+        match = [p for p in doc.paragraphs if p.text.strip() == "Right Heading"]
+        assert match
+        assert match[0].style.name == "Heading 2"
+        assert match[0].alignment == WD_ALIGN_PARAGRAPH.RIGHT
+
+
+# =============================================================================
 # Table Placeholder Tests
 # =============================================================================
 
