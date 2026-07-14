@@ -201,26 +201,21 @@ async def upload_to_librechat(
     }
 
 
-def format_file_artifact(file_info: dict, text_message: Optional[str] = None) -> tuple:
-    """Format file info as an MCP tool response with file artifact.
+def format_file_artifact(file_info: dict, text_message: Optional[str] = None):
+    """Format file info as an MCP CallToolResult with file artifact.
 
-    Returns a two-tuple (text_string, artifacts) for content_and_artifact format.
-    LibreChat/LangChain expects this exact format:
-
-    (
-        "Success message text",  # First element: plain string
-        {                        # Second element: artifacts object
-            "files": [{file info}]
-        }
-    )
+    Returns a CallToolResult directly to bypass FastMCP's response processing.
+    LibreChat will receive the proper MCP format with content and structuredContent.
 
     Args:
         file_info: Dict returned by upload_to_librechat()
         text_message: Optional text message to include with the file
 
     Returns:
-        Two-tuple (text_string, artifacts_dict) for content_and_artifact format
+        mcp.types.CallToolResult with content and structuredContent
     """
+    from mcp import types
+
     file_id = file_info["file_id"]
     filename = file_info["filename"]
     filepath = file_info.get("filepath", f"/uploads/{file_id}")
@@ -228,11 +223,10 @@ def format_file_artifact(file_info: dict, text_message: Optional[str] = None) ->
     file_bytes = file_info.get("bytes", 0)
     source = file_info.get("source", "local")
 
-    # First element: plain text string (not a list of content items)
     text = text_message or f"File '{filename}' created successfully."
 
-    # Second element: artifacts object with files array
-    artifacts = {
+    # Build file artifact for structuredContent
+    file_artifact = {
         "files": [{
             "file_id": file_id,
             "filename": filename,
@@ -243,5 +237,10 @@ def format_file_artifact(file_info: dict, text_message: Optional[str] = None) ->
         }]
     }
 
-    # Return two-tuple for content_and_artifact format
-    return (text, artifacts)
+    # Return CallToolResult directly to bypass FastMCP processing
+    return types.CallToolResult(
+        content=[
+            types.TextContent(type="text", text=text)
+        ],
+        structuredContent=file_artifact,
+    )

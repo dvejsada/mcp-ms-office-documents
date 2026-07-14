@@ -119,8 +119,9 @@ class TestLibreChatBackend:
         assert result == "application/octet-stream"
 
     def test_format_file_artifact_with_text(self):
-        """Test format_file_artifact with text message returns (text, artifacts) tuple."""
+        """Test format_file_artifact with text message returns CallToolResult."""
         from upload_tools.backends.librechat import format_file_artifact
+        from mcp import types
 
         file_info = {
             "file_id": "test-file-id-123",
@@ -134,21 +135,19 @@ class TestLibreChatBackend:
 
         result = format_file_artifact(file_info, "Document created successfully.")
 
-        # Result should be a two-tuple (text_string, artifacts_dict)
-        assert isinstance(result, tuple)
-        assert len(result) == 2
+        # Result should be CallToolResult
+        assert isinstance(result, types.CallToolResult)
 
-        text, artifacts = result
+        # Check content has TextContent with the message
+        assert len(result.content) == 1
+        assert isinstance(result.content[0], types.TextContent)
+        assert result.content[0].text == "Document created successfully."
 
-        # First element should be the text message string
-        assert isinstance(text, str)
-        assert text == "Document created successfully."
-
-        # Second element should be artifacts dict with files array
-        assert isinstance(artifacts, dict)
-        assert "files" in artifacts
-        assert len(artifacts["files"]) == 1
-        file_artifact = artifacts["files"][0]
+        # Check structuredContent has files array
+        assert result.structuredContent is not None
+        assert "files" in result.structuredContent
+        assert len(result.structuredContent["files"]) == 1
+        file_artifact = result.structuredContent["files"][0]
         assert file_artifact["file_id"] == "test-file-id-123"
         assert file_artifact["filename"] == "document.docx"
         assert file_artifact["filepath"] == "/uploads/document.docx"
@@ -159,6 +158,7 @@ class TestLibreChatBackend:
     def test_format_file_artifact_without_text(self):
         """Test format_file_artifact without text message uses default message."""
         from upload_tools.backends.librechat import format_file_artifact
+        from mcp import types
 
         file_info = {
             "file_id": "test-file-id-456",
@@ -168,22 +168,20 @@ class TestLibreChatBackend:
 
         result = format_file_artifact(file_info, None)
 
-        # Result should be a two-tuple
-        assert isinstance(result, tuple)
-        assert len(result) == 2
+        # Result should be CallToolResult
+        assert isinstance(result, types.CallToolResult)
 
-        text, artifacts = result
+        # Check content has default message
+        assert len(result.content) == 1
+        assert isinstance(result.content[0], types.TextContent)
+        assert "data.xlsx" in result.content[0].text  # Default message includes filename
 
-        # First element should be default text message
-        assert isinstance(text, str)
-        assert "data.xlsx" in text  # Default message includes filename
-
-        # Second element should be artifacts dict
-        assert isinstance(artifacts, dict)
-        assert "files" in artifacts
-        assert len(artifacts["files"]) == 1
-        assert artifacts["files"][0]["file_id"] == "test-file-id-456"
-        assert artifacts["files"][0]["filename"] == "data.xlsx"
+        # Check structuredContent has files array
+        assert result.structuredContent is not None
+        assert "files" in result.structuredContent
+        assert len(result.structuredContent["files"]) == 1
+        assert result.structuredContent["files"][0]["file_id"] == "test-file-id-456"
+        assert result.structuredContent["files"][0]["filename"] == "data.xlsx"
 
 
 class TestUploadToLibreChat:
