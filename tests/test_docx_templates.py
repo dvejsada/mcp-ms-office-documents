@@ -428,6 +428,25 @@ class TestTablePlaceholders:
         path = save_document(doc, "table_01_simple.docx")
         assert path.exists()
 
+    def test_placeholder_in_nested_table(self):
+        """A placeholder in a table nested inside a cell is replaced too."""
+        doc = Document()
+        outer = doc.add_table(rows=1, cols=1)
+        outer.style = 'Table Grid'
+        cell = outer.cell(0, 0)
+        cell.text = "Outer {{outer_field}}"
+        inner = cell.add_table(rows=1, cols=1)
+        inner.cell(0, 0).text = "Inner {{inner_field}}"
+
+        _replace_placeholders_in_document(
+            doc, {"outer_field": "A", "inner_field": "B"})
+
+        assert "{{" not in cell.text
+        assert inner.cell(0, 0).text == "Inner B"
+
+        path = save_document(doc, "table_02_nested.docx")
+        assert path.exists()
+
     def test_markdown_in_table_cell(self):
         """Test markdown formatting in table cells."""
         doc = Document()
