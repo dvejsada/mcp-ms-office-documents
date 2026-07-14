@@ -119,7 +119,7 @@ class TestLibreChatBackend:
         assert result == "application/octet-stream"
 
     def test_format_file_artifact_with_text(self):
-        """Test format_file_artifact with text message."""
+        """Test format_file_artifact with text message returns formatted string."""
         from upload_tools.backends.librechat import format_file_artifact
 
         file_info = {
@@ -129,23 +129,21 @@ class TestLibreChatBackend:
             "type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             "bytes": 12345,
             "source": "local",
+            "download_url": "/api/files/download/user-123/test-file-id-123",
         }
 
         result = format_file_artifact(file_info, "Document created successfully.")
 
-        assert "content" in result
-        assert len(result["content"]) == 2
-
-        text_content = result["content"][0]
-        assert text_content["type"] == "text"
-        assert text_content["text"] == "Document created successfully."
-
-        file_content = result["content"][1]
-        assert file_content["type"] == "file"
-        assert file_content["file_id"] == "test-file-id-123"
-        assert file_content["filename"] == "document.docx"
-        assert file_content["mimeType"] == \
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        # Result should be a string, not a dict
+        assert isinstance(result, str)
+        # Check that text message is included
+        assert "Document created successfully." in result
+        # Check file details are included
+        assert "document.docx" in result
+        assert "test-file-id-123" in result
+        assert "12,345 bytes" in result
+        # Check download URL is included as a Markdown link
+        assert "[document.docx](/api/files/download/user-123/test-file-id-123)" in result
 
     def test_format_file_artifact_without_text(self):
         """Test format_file_artifact without text message."""
@@ -159,12 +157,13 @@ class TestLibreChatBackend:
 
         result = format_file_artifact(file_info, None)
 
-        assert "content" in result
-        assert len(result["content"]) == 1
-
-        file_content = result["content"][0]
-        assert file_content["type"] == "file"
-        assert file_content["file_id"] == "test-file-id-456"
+        # Result should be a string
+        assert isinstance(result, str)
+        # Check file details are included
+        assert "data.xlsx" in result
+        assert "test-file-id-456" in result
+        # Without download_url, no download link should be present
+        assert "Download Link" not in result
 
 
 class TestUploadToLibreChat:
@@ -240,6 +239,8 @@ class TestUploadToLibreChat:
 
             assert result["file_id"] == "uploaded-file-id"
             assert result["filename"] == "document.docx"
+            # Verify download_url is constructed correctly
+            assert result["download_url"] == "/api/files/download/user-123/uploaded-file-id"
 
 
 class TestBufferFunctions:

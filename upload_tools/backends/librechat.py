@@ -78,7 +78,8 @@ async def upload_to_librechat(
             "filepath": "/path/to/file",
             "type": "application/vnd.openxmlformats-...",
             "bytes": 12345,
-            "source": "local"
+            "source": "local",
+            "download_url": "/api/files/download/{user_id}/{file_id}"
         }
 
     Raises:
@@ -184,48 +185,59 @@ async def upload_to_librechat(
         file_info.get("filename", filename),
     )
 
+    # Construct download URL for LLM to use in responses
+    file_id = file_info["file_id"]
+    download_url = f"/api/files/download/{user_id}/{file_id}"
+
     # Return normalized file metadata
     return {
-        "file_id": file_info["file_id"],
+        "file_id": file_id,
         "filename": file_info.get("filename", filename),
         "filepath": file_info.get("filepath"),
         "type": file_info.get("type", mime_type),
         "bytes": file_info.get("bytes", file_size),
         "source": file_info.get("source", "local"),
+        "download_url": download_url,
     }
 
 
-def format_file_artifact(file_info: dict, text_message: Optional[str] = None) -> dict:
-    """Format file info as an MCP tool response with file artifact.
+def format_file_artifact(file_info: dict, text_message: Optional[str] = None) -> str:
+    """Format file info as an MCP tool response string.
 
-    This creates the response structure expected by LibreChat for displaying
-    files as attachments in the chat UI.
+    Returns a simple string response containing the file details and download URL.
+    FastMCP 3.x handles string returns as TextContent automatically.
+
+    For LibreChat integration, the response includes:
+    - Success message
+    - File metadata (file_id, filename, size)
+    - Download URL for the LLM to format as a clickable link
 
     Args:
         file_info: Dict returned by upload_to_librechat()
         text_message: Optional text message to include with the file
 
     Returns:
-        MCP tool response dict with content array containing text and file items
+        Formatted string with file information and download URL
     """
-    content = []
+    download_url = file_info.get("download_url", "")
+    filename = file_info.get("filename", "document")
+    file_id = file_info.get("file_id", "")
+    file_size = file_info.get("bytes", 0)
+    mime_type = file_info.get("type", "application/octet-stream")
 
-    # Add text content if provided
+    # Build response parts
+    parts = []
+    
     if text_message:
-        content.append({
-            "type": "text",
-            "text": text_message,
-        })
-
-    # Add file artifact
-    content.append({
-        "type": "file",
-        "file_id": file_info["file_id"],
-        "filename": file_info["filename"],
-        "filepath": file_info.get("filepath"),
-        "mimeType": file_info.get("type"),  # Note: MCP uses mimeType, not type
-        "bytes": file_info.get("bytes"),
-        "source": file_info.get("source", "local"),
-    })
-
-    return {"content": content}
+        parts.append(text_message)
+    
+    parts.append(f"\n**File Details:**")
+    parts.append(f"- Filename: {filename}")
+    parts.append(f"- Size: {file_size:,} bytes")
+    parts.append(f"- Type: {mime_type}")
+    parts.append(f"- File ID: {file_id}")
+    
+    if download_url:
+        parts.append(f"\n**Download Link:** [{filename}]({download_url})")
+    
+    return "\n".join(parts)
