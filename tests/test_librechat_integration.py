@@ -119,8 +119,9 @@ class TestLibreChatBackend:
         assert result == "application/octet-stream"
 
     def test_format_file_artifact_with_text(self):
-        """Test format_file_artifact with text message returns formatted string."""
+        """Test format_file_artifact with text message returns ToolResult."""
         from upload_tools.backends.librechat import format_file_artifact
+        from fastmcp.server.server import ToolResult
 
         file_info = {
             "file_id": "test-file-id-123",
@@ -134,20 +135,28 @@ class TestLibreChatBackend:
 
         result = format_file_artifact(file_info, "Document created successfully.")
 
-        # Result should be a string, not a dict
-        assert isinstance(result, str)
-        # Check that text message is included
-        assert "Document created successfully." in result
-        # Check file details are included
-        assert "document.docx" in result
-        assert "test-file-id-123" in result
-        assert "12,345 bytes" in result
-        # Check download URL is included as a Markdown link
-        assert "[document.docx](/api/files/download/user-123/test-file-id-123)" in result
+        # Result should be a ToolResult
+        assert isinstance(result, ToolResult)
+        # Check content has text
+        assert len(result.content) == 1
+        assert result.content[0].text == "Document created successfully."
+        # Check structured_content has the file artifact format
+        assert "content" in result.structured_content
+        content_items = result.structured_content["content"]
+        assert len(content_items) == 2
+        # First item is text
+        assert content_items[0]["type"] == "text"
+        assert content_items[0]["text"] == "Document created successfully."
+        # Second item is file artifact
+        assert content_items[1]["type"] == "file"
+        assert content_items[1]["file_id"] == "test-file-id-123"
+        assert content_items[1]["filename"] == "document.docx"
+        assert content_items[1]["mimeType"] == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
     def test_format_file_artifact_without_text(self):
         """Test format_file_artifact without text message."""
         from upload_tools.backends.librechat import format_file_artifact
+        from fastmcp.server.server import ToolResult
 
         file_info = {
             "file_id": "test-file-id-456",
@@ -157,13 +166,16 @@ class TestLibreChatBackend:
 
         result = format_file_artifact(file_info, None)
 
-        # Result should be a string
-        assert isinstance(result, str)
-        # Check file details are included
-        assert "data.xlsx" in result
-        assert "test-file-id-456" in result
-        # Without download_url, no download link should be present
-        assert "Download Link" not in result
+        # Result should be a ToolResult
+        assert isinstance(result, ToolResult)
+        # Check structured_content has only file artifact (no text)
+        assert "content" in result.structured_content
+        content_items = result.structured_content["content"]
+        assert len(content_items) == 1
+        # Only item is file artifact
+        assert content_items[0]["type"] == "file"
+        assert content_items[0]["file_id"] == "test-file-id-456"
+        assert content_items[0]["filename"] == "data.xlsx"
 
 
 class TestUploadToLibreChat:
