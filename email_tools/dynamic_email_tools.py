@@ -15,7 +15,7 @@ import threading
 from email.mime.text import MIMEText
 from email import encoders
 from pathlib import Path
-from typing import Any, Dict, Optional, Literal
+from typing import Any, Dict, Literal
 from pydantic import Field, create_model
 from fastmcp import FastMCP
 from upload_tools import upload_file
@@ -49,11 +49,13 @@ TYPE_MAP = {
     "dict": dict, "object": dict,
 }
 
+# Optional fields use a plain type with a None default (not Optional[...]):
+# anyOf[type, null] schemas lose their description in some MCP clients.
 BASE_FIELDS: Dict[str, Any] = {
     "subject": (str, Field(..., description="Email subject line (also sets Subject header)")),
-    "to": (Optional[list[str]], Field(None, description="List of recipient email addresses")),
-    "cc": (Optional[list[str]], Field(None, description="List of CC recipient email addresses")),
-    "bcc": (Optional[list[str]], Field(None, description="List of BCC recipient email addresses")),
+    "to": (list[str], Field(None, description="List of recipient email addresses")),
+    "cc": (list[str], Field(None, description="List of CC recipient email addresses")),
+    "bcc": (list[str], Field(None, description="List of BCC recipient email addresses")),
 }
 
 
@@ -159,10 +161,12 @@ def _register_single_email_template(mcp: FastMCP, spec: Dict[str, Any]) -> bool:
 
         py_type = TYPE_MAP.get(str(arg.get("type", "string")).lower(), str)
         required = bool(arg.get("required", True))
-        field_type = py_type if required else Optional[py_type]  # type: ignore[index]
         default = arg["default"] if "default" in arg else (Ellipsis if required else None)
         desc = arg.get("description")
-        fields[arg_name] = (field_type, Field(default, description=desc) if desc is not None else default)
+        # Plain type always (no Optional/anyOf): optionality comes from the
+        # default alone, so the description stays a sibling of a flat type and
+        # survives MCP clients that drop descriptions when normalizing anyOf.
+        fields[arg_name] = (py_type, Field(default, description=desc) if desc is not None else default)
 
     model = create_model(f"{name}_Args", **fields)  # type: ignore
     # See dynamic_docx_tools: the tool annotation is resolved by name against this
