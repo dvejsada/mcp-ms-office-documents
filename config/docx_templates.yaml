@@ -459,8 +459,10 @@ templates:
             číslování MUSÍ navazovat napříč oddíly — v dalším oddíle pokračuj
             např. "5. …", nezačínej znovu od 1.
           - Mezi nadpisy, odstavci a dalšími bloky nech vždy prázdný řádek.
-          - Označení důkazu vlož jako samostatný odstavec uvozený řádkem
-            <!-- style: Důkazy --> s textem "Důkaz: …".
+          - Důkazy vlož za odstavec, k němuž se vážou: nejprve samostatný
+            odstavec s návětím "Důkaz:" (či "Důkazy:") uvozený řádkem
+            <!-- style: Důkazy -->, pak odrážkový seznam důkazů uvozený řádkem
+            <!-- style: Důkazy odrážky --> (každý důkaz jako položka "- …").
           - Citace (judikatura, smluvní ujednání) piš jako blockquote: "> text".
           - Poslední oddíl zakonči nadpisem "# NÁVRH VÝROKU ROZHODNUTÍ" a
             číslovaným odstavcem tučně, např. "9. **S ohledem na výše uvedené
@@ -473,7 +475,11 @@ templates:
           2. Smlouvou ze dne 1. 1. 2026 se žalovaný zavázal…
 
           <!-- style: Důkazy -->
-          Důkaz: smlouva ze dne 1. 1. 2026
+          Důkaz:
+
+          <!-- style: Důkazy odrážky -->
+          - smlouva ze dne 1. 1. 2026
+          - výslech svědka Jana Nováka
 
           # PRÁVNÍ POSOUZENÍ
 

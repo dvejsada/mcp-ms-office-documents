@@ -32,8 +32,9 @@ OUTPUT_DIR = Path(__file__).parent / "output" / "docx"
 # Styles the template's style_mapping and argument descriptions rely on.
 REQUIRED_STYLES = [
     "Oddíl_číslování", "Pododdíl_číslování", "Odstavec_číslování",
-    "Pododstavec", "Petit", "Důkazy", "Seznam přílohy", "Seznam důkazy",
-    "PODPIS", "Quote", "List Number", "List Bullet", "Table Grid",
+    "Pododstavec", "Petit", "Důkazy", "Důkazy odrážky", "Seznam přílohy",
+    "Seznam důkazy", "PODPIS", "Quote", "List Number", "List Bullet",
+    "Table Grid",
 ]
 
 
@@ -67,7 +68,10 @@ def _payload(spec, **overrides):
             "# SKUTKOVÝ STAV\n\n"
             "1. První odstavec podání.\n\n"
             "2. Druhý odstavec podání.\n\n"
-            "<!-- style: Důkazy -->\nDůkaz: smlouva ze dne 1. 1. 2026\n\n"
+            "<!-- style: Důkazy -->\nDůkaz:\n\n"
+            "<!-- style: Důkazy odrážky -->\n"
+            "- smlouva ze dne 1. 1. 2026\n"
+            "- výslech svědka Jana Nováka\n\n"
             "> Citace smluvního ujednání.\n\n"
             "# PRÁVNÍ POSOUZENÍ\n\n"
             "3. Třetí odstavec podání.\n\n"
@@ -164,8 +168,11 @@ def test_body_maps_markdown_onto_firm_styles(template_path, spec):
         overrides.append(vals[0] if vals else None)
     assert overrides == ["1", "1", "3", "4"]
 
-    dukaz = _styled(doc, "Dkazy")
-    assert [p.text for p in dukaz] == ["Důkaz: smlouva ze dne 1. 1. 2026"]
+    # Evidence: a "Důkaz:" label followed by a bulleted list of the items.
+    assert [p.text for p in _styled(doc, "Dkazy")] == ["Důkaz:"]
+    bullets = _styled(doc, "Dkazyodrazky")
+    assert [p.text for p in bullets] == [
+        "smlouva ze dne 1. 1. 2026", "výslech svědka Jana Nováka"]
     assert [p.text for p in _styled(doc, "Quote")] == ["Citace smluvního ujednání."]
 
 
@@ -184,6 +191,10 @@ def test_petit_and_prilohy_use_directive_styles(template_path, spec):
     assert [p.text for p in prilohy] == ["Plná moc", "Smlouva ze dne 1. 1. 2026"]
 
 
+def _page_breaks(doc):
+    return len(doc.element.body.xpath('.//w:br[@w:type="page"]'))
+
+
 def test_conditional_blocks(template_path, spec):
     # Default flags: přílohy in, důkazy out, petit in.
     doc = _render(template_path, spec, _payload(spec))
@@ -191,6 +202,10 @@ def test_conditional_blocks(template_path, spec):
     assert "Přílohy:" in texts
     assert "Bez příloh." not in texts
     assert "Seznam důkazů:" not in texts
+    # Without the evidence list there is no explicit page break; the body
+    # still starts on a fresh page via the cover section's break.
+    assert _page_breaks(doc) == 0
+    assert len(doc.element.body.xpath('.//w:pPr/w:sectPr')) == 1
 
     # Flip the flags: no attachments, no petit, with an evidence list.
     doc = _render(template_path, spec, _payload(
@@ -202,3 +217,5 @@ def test_conditional_blocks(template_path, spec):
     assert "Seznam důkazů:" in texts
     assert not _styled(doc, "Petit")
     assert "R O Z S U D E K" not in texts
+    # The evidence list takes its own page (explicit break before it).
+    assert _page_breaks(doc) == 1
