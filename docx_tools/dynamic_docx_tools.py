@@ -690,10 +690,16 @@ def _register_single_template(mcp: FastMCP, spec: Dict[str, Any],
         # Handle regular types
         py_type = TYPE_MAP.get(str(arg.get("type", "string")).lower(), str)
         required = bool(arg.get("required", True))
-        field_type = py_type if required else Optional[py_type]  # type: ignore[index]
         default = arg.get("default", (... if required else None))
         desc = arg.get("description", "")
-        fields[arg_name] = (field_type, Field(default, description=desc) if desc else default)
+        # Always use the plain type — never Optional[...]. Optionality is
+        # expressed by the default alone (the field is then absent from the
+        # schema's "required" list). Optional[...] would emit
+        # anyOf[{type}, {null}], and several MCP clients normalize anyOf in a
+        # way that silently drops the sibling description, so optional args
+        # would reach the model with no description at all. Pydantic does not
+        # validate defaults, so a None default with a plain type is fine.
+        fields[arg_name] = (py_type, Field(default, description=desc) if desc else default)
 
     # Create the Pydantic model
     model = create_model(f"{name}_DocxArgs", **fields)  # type: ignore
