@@ -119,10 +119,8 @@ class TestLibreChatBackend:
         assert result == "application/octet-stream"
 
     def test_format_file_artifact_with_text(self):
-        """Test format_file_artifact with text message returns FastMCP ToolResult."""
+        """Test format_file_artifact with text message returns dict with result property."""
         from upload_tools.backends.librechat import format_file_artifact
-        from fastmcp.tools.base import ToolResult
-        from mcp import types
 
         file_info = {
             "file_id": "test-file-id-123",
@@ -136,31 +134,25 @@ class TestLibreChatBackend:
 
         result = format_file_artifact(file_info, "Document created successfully.")
 
-        # Result should be FastMCP ToolResult
-        assert isinstance(result, ToolResult)
+        # Result should be dict with result property
+        assert isinstance(result, dict)
+        assert "result" in result
 
-        # Check content has TextContent with the message
-        assert len(result.content) == 1
-        assert isinstance(result.content[0], types.TextContent)
-        assert result.content[0].text == "Document created successfully."
+        # Check result.message
+        assert result["result"]["message"] == "Document created successfully."
 
-        # Check structured_content has files array
-        assert result.structured_content is not None
-        assert "files" in result.structured_content
-        assert len(result.structured_content["files"]) == 1
-        file_artifact = result.structured_content["files"][0]
-        assert file_artifact["file_id"] == "test-file-id-123"
-        assert file_artifact["filename"] == "document.docx"
-        assert file_artifact["filepath"] == "/uploads/document.docx"
-        assert file_artifact["mimeType"] == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        assert file_artifact["bytes"] == 12345
-        assert file_artifact["source"] == "local"
+        # Check result.file
+        file_data = result["result"]["file"]
+        assert file_data["file_id"] == "test-file-id-123"
+        assert file_data["filename"] == "document.docx"
+        assert file_data["filepath"] == "/uploads/document.docx"
+        assert file_data["mimeType"] == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        assert file_data["bytes"] == 12345
+        assert file_data["source"] == "local"
 
     def test_format_file_artifact_without_text(self):
         """Test format_file_artifact without text message uses default message."""
         from upload_tools.backends.librechat import format_file_artifact
-        from fastmcp.tools.base import ToolResult
-        from mcp import types
 
         file_info = {
             "file_id": "test-file-id-456",
@@ -170,20 +162,17 @@ class TestLibreChatBackend:
 
         result = format_file_artifact(file_info, None)
 
-        # Result should be FastMCP ToolResult
-        assert isinstance(result, ToolResult)
+        # Result should be dict with result property
+        assert isinstance(result, dict)
+        assert "result" in result
 
-        # Check content has default message
-        assert len(result.content) == 1
-        assert isinstance(result.content[0], types.TextContent)
-        assert "data.xlsx" in result.content[0].text  # Default message includes filename
+        # Check result.message has default text including filename
+        assert "data.xlsx" in result["result"]["message"]
 
-        # Check structured_content has files array
-        assert result.structured_content is not None
-        assert "files" in result.structured_content
-        assert len(result.structured_content["files"]) == 1
-        assert result.structured_content["files"][0]["file_id"] == "test-file-id-456"
-        assert result.structured_content["files"][0]["filename"] == "data.xlsx"
+        # Check result.file
+        file_data = result["result"]["file"]
+        assert file_data["file_id"] == "test-file-id-456"
+        assert file_data["filename"] == "data.xlsx"
 
 
 class TestUploadToLibreChat:

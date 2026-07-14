@@ -201,23 +201,20 @@ async def upload_to_librechat(
     }
 
 
-def format_file_artifact(file_info: dict, text_message: Optional[str] = None):
-    """Format file info using FastMCP ToolResult with structured_content.
+def format_file_artifact(file_info: dict, text_message: Optional[str] = None) -> dict:
+    """Format file info as a simple dict that FastMCP will pass through correctly.
 
-    Uses FastMCP's ToolResult class which handles the content_and_artifact
-    format properly. When structured_content is set, to_mcp_result() returns
-    a tuple (content, structured_content).
+    Returns a dict with 'result' property containing file info. This format
+    is compatible with FastMCP's output schema validation and LibreChat's
+    MCP client expectations.
 
     Args:
         file_info: Dict returned by upload_to_librechat()
         text_message: Optional text message to include with the file
 
     Returns:
-        FastMCP ToolResult that will be converted to proper MCP format
+        Dict with result containing message and file info
     """
-    from fastmcp.tools.base import ToolResult
-    from mcp import types
-
     file_id = file_info["file_id"]
     filename = file_info["filename"]
     filepath = file_info.get("filepath", f"/uploads/{file_id}")
@@ -227,22 +224,17 @@ def format_file_artifact(file_info: dict, text_message: Optional[str] = None):
 
     text = text_message or f"File '{filename}' created successfully."
 
-    # Build artifacts dict for structured_content
-    artifacts = {
-        "files": [{
-            "file_id": file_id,
-            "filename": filename,
-            "filepath": filepath,
-            "mimeType": mime_type,
-            "bytes": file_bytes,
-            "source": source,
-        }],
-        "file_ids": [file_id]
+    # Return dict with 'result' property for schema validation
+    return {
+        "result": {
+            "message": text,
+            "file": {
+                "file_id": file_id,
+                "filename": filename,
+                "filepath": filepath,
+                "mimeType": mime_type,
+                "bytes": file_bytes,
+                "source": source,
+            }
+        }
     }
-
-    # Return FastMCP ToolResult with structured_content
-    # When structured_content is set, to_mcp_result() returns tuple format
-    return ToolResult(
-        content=[types.TextContent(type="text", text=text)],
-        structured_content=artifacts,
-    )
