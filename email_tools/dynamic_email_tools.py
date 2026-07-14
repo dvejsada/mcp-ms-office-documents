@@ -15,7 +15,7 @@ import threading
 from email.mime.text import MIMEText
 from email import encoders
 from pathlib import Path
-from typing import Any, Dict, Optional, Literal
+from typing import Any, Dict, Literal
 from pydantic import Field, create_model
 from fastmcp import FastMCP
 from upload_tools import upload_file

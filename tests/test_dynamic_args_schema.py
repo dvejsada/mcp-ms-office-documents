@@ -90,3 +90,24 @@ def test_email_optional_args_keep_flat_schema_and_description():
     required = schema.get("required", [])
     assert "req_arg" in required and "subject" in required
     assert "opt_default" not in required and "to" not in required
+
+
+def test_explicit_null_for_optional_arg_is_rejected():
+    """Documented tradeoff of the flat schema: optional args are OMITTED, not nulled.
+
+    With the plain (non-Optional) type, explicitly passing null no longer
+    validates — this test pins the behavior change down so an accidental
+    revert to Optional[...] (and thus to anyOf schemas) fails loudly.
+    """
+    import pydantic
+    import pytest
+
+    import docx_tools.dynamic_docx_tools as ddt
+
+    _model_schema(register_docx_template, DOCX_SPEC, "req_arg")
+    model = getattr(ddt, f"{DOCX_SPEC['name']}_DocxArgs")
+    # Omitting the optional arg uses its default...
+    assert model(req_arg="x").opt_default == " "
+    # ...but explicit null is rejected instead of silently accepted.
+    with pytest.raises(pydantic.ValidationError):
+        model(req_arg="x", opt_default=None)
