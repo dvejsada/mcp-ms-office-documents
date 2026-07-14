@@ -138,16 +138,21 @@ def process_markdown_content(doc, content, return_elements=False,
             continue
         # --- All other block elements: delegate to block processor ---
         # Continuation survives headings, blank lines (above), block quotes and
-        # comment lines (directives attach to the block they style; both are
-        # deliberate interruptions of a numbered run — e.g. an evidence note or
-        # citation between numbered paragraphs of a legal filing). Any other
-        # block content breaks the run. A numbered line is left alone so a list
-        # that actually renders can update the count via process_list_items.
+        # complete <!-- --> comment lines. A style directive attaches to the
+        # block it styles, and that WHOLE directive-styled block (whatever its
+        # type — the dispatcher consumes directive + target together) is treated
+        # as a deliberate interruption of a numbered run, exactly like a
+        # heading: e.g. an evidence note or citation between numbered
+        # paragraphs of a legal filing. Any other block content breaks the run.
+        # A numbered line is left alone so a list that actually renders can
+        # update the count via process_list_items. An unclosed "<!--" is not a
+        # comment (it renders as literal prose), so it resets like any prose.
         stripped = line.strip()
+        is_comment_line = stripped.startswith('<!--') and stripped.endswith('-->')
         if (HEADING_PATTERN.match(stripped) is None
                 and ORDERED_LIST_PATTERN.match(stripped) is None
                 and not stripped.startswith('>')
-                and not stripped.startswith('<!--')):
+                and not is_comment_line):
             ordered_run['next'] = None
         i, block_elems = process_markdown_block(doc, lines, i,
                                                 return_element=return_elements,
