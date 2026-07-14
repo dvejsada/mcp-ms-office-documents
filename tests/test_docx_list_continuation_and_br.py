@@ -169,6 +169,33 @@ def test_prose_between_lists_breaks_continuation():
     assert any(p.text == "3. Treti" and not _is_ordered(p) for p in paras)
 
 
+def test_numbering_continues_after_blockquote():
+    # A quote deliberately interrupts a numbered run (like a heading), so the
+    # count resumes after it — e.g. a citation between numbered paragraphs of a
+    # legal filing.
+    md = "1. Prvni\n\n2. Druhy\n\n> Citace rozhodnuti.\n\n3. Treti\n"
+    doc, paras = _render(md)
+    items = [p for p in paras if _is_ordered(p)]
+    assert [p.text for p in items] == ["Prvni", "Druhy", "Treti"]
+    assert _start_override(doc, _num_id_of(items[2])) == "3"
+
+
+def test_numbering_continues_after_style_directive_block():
+    # A <!-- style: … --> directive and the block it styles are a deliberate
+    # interruption too (e.g. an evidence note between numbered paragraphs).
+    md = (
+        "1. Prvni\n\n2. Druhy\n\n"
+        "<!-- style: Intense Quote -->\nDukaz: smlouva ze dne 1. 1. 2026\n\n"
+        "3. Treti\n"
+    )
+    doc, paras = _render(md)
+    items = [p for p in paras if _is_ordered(p)]
+    assert [p.text for p in items] == ["Prvni", "Druhy", "Treti"]
+    assert _start_override(doc, _num_id_of(items[2])) == "3"
+    styled = [p for p in paras if p.text.startswith("Dukaz:")]
+    assert styled and styled[0].style.name == "Intense Quote"
+
+
 def test_standalone_non_one_pair_blank_separated_stays_prose():
     # No preceding list -> textually a date pair -> prose (date disambiguation).
     doc, paras = _render("5. Paty\n\n6. Sesty")
