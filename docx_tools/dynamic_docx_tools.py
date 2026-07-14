@@ -489,6 +489,11 @@ def _replace_placeholders_in_table(
                 # Note: We don't pass doc to avoid inserting lists in table cells
                 _replace_placeholders_in_paragraph(paragraph, context, doc=None,
                                                    style_map=style_map)
+            # Tables nested inside a cell (layout tables in letterheads etc.)
+            # carry placeholders too; cell.paragraphs does not descend into them.
+            for nested in cell.tables:
+                _replace_placeholders_in_table(nested, context, doc=None,
+                                               style_map=style_map)
 
 
 def _replace_placeholders_in_document(doc: DocxDocument, context: Dict[str, str],

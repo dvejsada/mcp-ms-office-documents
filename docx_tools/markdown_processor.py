@@ -82,11 +82,12 @@ def process_markdown_content(doc, content, return_elements=False,
     i = 0
     all_elements = []
     # Running ordered-list count: the number that would continue the most recent
-    # top-level ordered list. Preserved across headings and blank lines so a list
-    # can resume after a section heading; reset by any other block content. Lets
-    # _continues_ordered_run() accept e.g. "3." after a heading even when it is
-    # blank-separated (and so not locally genuine). A mutable cell so
-    # process_list_items can update it through process_markdown_block.
+    # top-level ordered list. Preserved across headings, blank lines, block
+    # quotes and comment-directive blocks so a list can resume after a section
+    # heading or an interposed quote/styled note; reset by any other block
+    # content. Lets _continues_ordered_run() accept e.g. "3." after a heading
+    # even when it is blank-separated (and so not locally genuine). A mutable
+    # cell so process_list_items can update it through process_markdown_block.
     ordered_run = {'next': None}
     while i < n:
         line = lines[i]
@@ -124,7 +125,8 @@ def process_markdown_content(doc, content, return_elements=False,
                 # A heading does not break ordered-list continuation.
             elif first_line.startswith('>'):
                 elem = _add_quote(doc, full_text[1:].strip(), style_map)._p
-                ordered_run['next'] = None
+                # A quote does not break ordered-list continuation (like a
+                # heading, it deliberately interrupts a numbered run).
             else:
                 para = doc.add_paragraph()
                 parse_inline_formatting(full_text, para)
@@ -135,12 +137,22 @@ def process_markdown_content(doc, content, return_elements=False,
                 doc._body._body.remove(elem)
             continue
         # --- All other block elements: delegate to block processor ---
-        # Continuation survives only headings and (above) blank lines; any other
-        # block content breaks the run. A numbered line is left alone so a list
-        # that actually renders can update the count via process_list_items.
+        # Continuation survives headings, blank lines (above), block quotes and
+        # complete <!-- --> comment lines. A style directive attaches to the
+        # block it styles, and that WHOLE directive-styled block (whatever its
+        # type — the dispatcher consumes directive + target together) is treated
+        # as a deliberate interruption of a numbered run, exactly like a
+        # heading: e.g. an evidence note or citation between numbered
+        # paragraphs of a legal filing. Any other block content breaks the run.
+        # A numbered line is left alone so a list that actually renders can
+        # update the count via process_list_items. An unclosed "<!--" is not a
+        # comment (it renders as literal prose), so it resets like any prose.
         stripped = line.strip()
+        is_comment_line = stripped.startswith('<!--') and stripped.endswith('-->')
         if (HEADING_PATTERN.match(stripped) is None
-                and ORDERED_LIST_PATTERN.match(stripped) is None):
+                and ORDERED_LIST_PATTERN.match(stripped) is None
+                and not stripped.startswith('>')
+                and not is_comment_line):
             ordered_run['next'] = None
         i, block_elems = process_markdown_block(doc, lines, i,
                                                 return_element=return_elements,
