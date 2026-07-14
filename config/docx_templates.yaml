@@ -318,7 +318,7 @@ templates:
   #   ## heading   -> Pododdíl_číslování   (subsection, auto I. A, …)
   #   1. item      -> Odstavec_číslování   (numbered filing paragraph 1., 2., …)
   #   nested item  -> Pododstavec          (a., b., …)
-  #   > quote      -> Quote                (indented italic block for citations)
+  # Citations are written inline (italics in quotation marks), not as blocks.
   # Petit / přílohy / důkazy items are styled per block with an ad-hoc
   # <!-- style: … --> tag (see the argument descriptions).
   # ===========================================================================
@@ -463,9 +463,9 @@ templates:
             odstavec s návětím "Důkaz:" (či "Důkazy:") uvozený řádkem
             <!-- style: Důkazy -->, pak odrážkový seznam důkazů uvozený řádkem
             <!-- style: Důkazy odrážky --> (každý důkaz jako položka "- …").
-          - Citace (judikatura, smluvní ujednání) piš jako blockquote v
-            uvozovkách: > „citovaný text" — vlož ji hned za odstavec, k němuž
-            patří (před případný blok Důkaz).
+          - Citace (judikatura, smluvní ujednání) piš přímo v textu odstavce,
+            v uvozovkách a kurzívou: *„citovaný text"*. Nepoužívej blockquote
+            (>) ani samostatné odsazené odstavce.
           - Poslední oddíl zakonči nadpisem "# NÁVRH VÝROKU ROZHODNUTÍ" a
             číslovaným odstavcem tučně, např. "9. **S ohledem na výše uvedené
             žalobce navrhuje, aby nadepsaný soud vydal tento**".

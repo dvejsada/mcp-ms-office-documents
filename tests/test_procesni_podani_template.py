@@ -33,8 +33,7 @@ OUTPUT_DIR = Path(__file__).parent / "output" / "docx"
 REQUIRED_STYLES = [
     "Oddíl_číslování", "Pododdíl_číslování", "Odstavec_číslování",
     "Pododstavec", "Petit", "Důkazy", "Důkazy odrážky", "Seznam přílohy",
-    "Seznam důkazy", "PODPIS", "Quote", "List Number", "List Bullet",
-    "Table Grid",
+    "Seznam důkazy", "PODPIS", "List Number", "List Bullet", "Table Grid",
 ]
 
 
@@ -67,12 +66,12 @@ def _payload(spec, **overrides):
         "text_podani": (
             "# SKUTKOVÝ STAV\n\n"
             "1. První odstavec podání.\n\n"
-            "2. Druhý odstavec podání.\n\n"
+            "2. Druhý odstavec podání, v němž strany sjednaly, že "
+            "*„cena díla je splatná do 30 dnů od předání díla.“*\n\n"
             "<!-- style: Důkazy -->\nDůkaz:\n\n"
             "<!-- style: Důkazy odrážky -->\n"
             "- smlouva ze dne 1. 1. 2026\n"
             "- výslech svědka Jana Nováka\n\n"
-            "> Citace smluvního ujednání.\n\n"
             "# PRÁVNÍ POSOUZENÍ\n\n"
             "3. Třetí odstavec podání.\n\n"
             "# NÁVRH VÝROKU ROZHODNUTÍ\n\n"
@@ -173,7 +172,11 @@ def test_body_maps_markdown_onto_firm_styles(template_path, spec):
     bullets = _styled(doc, "Dkazyodrazky")
     assert [p.text for p in bullets] == [
         "smlouva ze dne 1. 1. 2026", "výslech svědka Jana Nováka"]
-    assert [p.text for p in _styled(doc, "Quote")] == ["Citace smluvního ujednání."]
+    # The inline citation stays inside its numbered paragraph, as italics.
+    para2 = next(p for p in _styled(doc, "Odstavecslovn")
+                 if "cena díla je splatná" in p.text)
+    cite_runs = [r for r in para2.runs if "cena díla" in r.text]
+    assert cite_runs and all(r.italic for r in cite_runs)
 
 
 def test_petit_and_prilohy_use_directive_styles(template_path, spec):
