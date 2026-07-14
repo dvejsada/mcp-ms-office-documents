@@ -63,7 +63,7 @@ def _payload(spec, **overrides):
         "zalovany": "XYZ a.s., IČO: 876 54 321<br>se sídlem Krátká 2, Brno",
         "typ_rizeni": "o zaplacení 1 000 000 Kč s příslušenstvím",
         "nazev_podani": "VYJÁDŘENÍ ŽALOVANÉHO K ŽALOBĚ",
-        "podpis": "ABC advokáti s.r.o.<br>JUDr. Jan Novák, advokát",
+        "podpis": "JUDr. Jan Novák, advokát",
         "text_podani": (
             "# SKUTKOVÝ STAV\n\n"
             "1. První odstavec podání.\n\n"

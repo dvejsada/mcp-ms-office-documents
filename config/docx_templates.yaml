@@ -463,7 +463,9 @@ templates:
             odstavec s návětím "Důkaz:" (či "Důkazy:") uvozený řádkem
             <!-- style: Důkazy -->, pak odrážkový seznam důkazů uvozený řádkem
             <!-- style: Důkazy odrážky --> (každý důkaz jako položka "- …").
-          - Citace (judikatura, smluvní ujednání) piš jako blockquote: "> text".
+          - Citace (judikatura, smluvní ujednání) piš jako blockquote v
+            uvozovkách: > „citovaný text" — vlož ji hned za odstavec, k němuž
+            patří (před případný blok Důkaz).
           - Poslední oddíl zakonči nadpisem "# NÁVRH VÝROKU ROZHODNUTÍ" a
             číslovaným odstavcem tučně, např. "9. **S ohledem na výše uvedené
             žalobce navrhuje, aby nadepsaný soud vydal tento**".
@@ -558,8 +560,9 @@ templates:
         type: string
         required: true
         description: |
-          Podepisující osoba/kancelář (zarovnáno vpravo, tučně); řádky odděl <br>.
-          Např.: ABC advokáti s.r.o.<br>JUDr. Jan Novák, advokát<br>v plné moci žalobce
+          Jméno podepisujícího advokáta (zarovnáno vpravo, tučně). Uvádí se
+          POUZE jméno a označení advokáta, nic dalšího.
+          Např.: JUDr. Jan Novák, advokát
       - name: cislo_zakazky
         type: string
         required: false
