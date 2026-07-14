@@ -119,9 +119,8 @@ class TestLibreChatBackend:
         assert result == "application/octet-stream"
 
     def test_format_file_artifact_with_text(self):
-        """Test format_file_artifact with text message returns ToolResult."""
+        """Test format_file_artifact with text message returns two-tuple."""
         from upload_tools.backends.librechat import format_file_artifact
-        from fastmcp.server.server import ToolResult
 
         file_info = {
             "file_id": "test-file-id-123",
@@ -135,28 +134,37 @@ class TestLibreChatBackend:
 
         result = format_file_artifact(file_info, "Document created successfully.")
 
-        # Result should be a ToolResult
-        assert isinstance(result, ToolResult)
-        # Check content has text
-        assert len(result.content) == 1
-        assert result.content[0].text == "Document created successfully."
-        # Check structured_content has the file artifact format
-        assert "content" in result.structured_content
-        content_items = result.structured_content["content"]
-        assert len(content_items) == 2
+        # Result should be a two-tuple (content, artifacts)
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+
+        content, artifacts = result
+
+        # Check content list has text and file items
+        assert isinstance(content, list)
+        assert len(content) == 2
         # First item is text
-        assert content_items[0]["type"] == "text"
-        assert content_items[0]["text"] == "Document created successfully."
+        assert content[0]["type"] == "text"
+        assert content[0]["text"] == "Document created successfully."
         # Second item is file artifact
-        assert content_items[1]["type"] == "file"
-        assert content_items[1]["file_id"] == "test-file-id-123"
-        assert content_items[1]["filename"] == "document.docx"
-        assert content_items[1]["mimeType"] == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        assert content[1]["type"] == "file"
+        assert content[1]["file_id"] == "test-file-id-123"
+        assert content[1]["filename"] == "document.docx"
+        assert content[1]["mimeType"] == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        assert content[1]["bytes"] == 12345
+        assert content[1]["source"] == "local"
+
+        # Check artifacts object
+        assert isinstance(artifacts, dict)
+        assert "files" in artifacts
+        assert "file_ids" in artifacts
+        assert len(artifacts["files"]) == 1
+        assert artifacts["file_ids"] == ["test-file-id-123"]
+        assert artifacts["files"][0]["file_id"] == "test-file-id-123"
 
     def test_format_file_artifact_without_text(self):
         """Test format_file_artifact without text message."""
         from upload_tools.backends.librechat import format_file_artifact
-        from fastmcp.server.server import ToolResult
 
         file_info = {
             "file_id": "test-file-id-456",
@@ -166,16 +174,23 @@ class TestLibreChatBackend:
 
         result = format_file_artifact(file_info, None)
 
-        # Result should be a ToolResult
-        assert isinstance(result, ToolResult)
-        # Check structured_content has only file artifact (no text)
-        assert "content" in result.structured_content
-        content_items = result.structured_content["content"]
-        assert len(content_items) == 1
+        # Result should be a two-tuple
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+
+        content, artifacts = result
+
+        # Check content list has only file item (no text)
+        assert isinstance(content, list)
+        assert len(content) == 1
         # Only item is file artifact
-        assert content_items[0]["type"] == "file"
-        assert content_items[0]["file_id"] == "test-file-id-456"
-        assert content_items[0]["filename"] == "data.xlsx"
+        assert content[0]["type"] == "file"
+        assert content[0]["file_id"] == "test-file-id-456"
+        assert content[0]["filename"] == "data.xlsx"
+
+        # Check artifacts object
+        assert isinstance(artifacts, dict)
+        assert artifacts["file_ids"] == ["test-file-id-456"]
 
 
 class TestUploadToLibreChat:

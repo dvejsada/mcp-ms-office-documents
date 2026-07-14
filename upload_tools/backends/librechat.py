@@ -201,50 +201,72 @@ async def upload_to_librechat(
     }
 
 
-def format_file_artifact(file_info: dict, text_message: Optional[str] = None):
+def format_file_artifact(file_info: dict, text_message: Optional[str] = None) -> tuple:
     """Format file info as an MCP tool response with file artifact.
 
-    Returns a ToolResult with structured_content containing the file artifact.
-    LibreChat frontend expects this format for rendering file attachments.
+    Returns a two-tuple [content, artifacts] for content_and_artifact format.
+    LangChain/LibreChat expects this exact format for file attachments.
 
-    The structured_content contains:
-    {
-        "content": [
+    Format:
+    (
+        [  # content list
             {"type": "text", "text": "Success message"},
-            {"type": "file", "file_id": "...", "filename": "...", "mimeType": "..."}
-        ]
-    }
+            {"type": "file", "file_id": "...", "filename": "...", "mimeType": "...", ...}
+        ],
+        {  # artifacts object
+            "files": [{file info}],
+            "file_ids": ["file_id"]
+        }
+    )
 
     Args:
         file_info: Dict returned by upload_to_librechat()
         text_message: Optional text message to include with the file
 
     Returns:
-        ToolResult with structured content for LibreChat
+        Two-tuple (content_list, artifacts_dict) for content_and_artifact format
     """
-    from fastmcp.server.server import ToolResult
-    from mcp import types
+    file_id = file_info["file_id"]
+    filename = file_info["filename"]
+    filepath = file_info.get("filepath", f"/uploads/{file_id}")
+    mime_type = file_info.get("type", "application/octet-stream")
+    file_bytes = file_info.get("bytes", 0)
+    source = file_info.get("source", "local")
 
-    content_items = []
+    # Build content list
+    content = []
 
     # Add text content if provided
     if text_message:
-        content_items.append({
+        content.append({
             "type": "text",
             "text": text_message,
         })
 
-    # Add file artifact - this format is expected by LibreChat frontend
-    content_items.append({
+    # Add file content item
+    file_content_item = {
         "type": "file",
-        "file_id": file_info["file_id"],
-        "filename": file_info["filename"],
-        "mimeType": file_info.get("type", "application/octet-stream"),
-    })
+        "file_id": file_id,
+        "filename": filename,
+        "filepath": filepath,
+        "mimeType": mime_type,
+        "bytes": file_bytes,
+        "source": source,
+    }
+    content.append(file_content_item)
 
-    # Return as ToolResult with structured_content
-    # This bypasses FastMCP's content_and_artifact detection
-    return ToolResult(
-        content=[types.TextContent(type="text", text=text_message or "File created.")],
-        structured_content={"content": content_items},
-    )
+    # Build artifacts object
+    artifacts = {
+        "files": [{
+            "file_id": file_id,
+            "filename": filename,
+            "filepath": filepath,
+            "mimeType": mime_type,
+            "bytes": file_bytes,
+            "source": source,
+        }],
+        "file_ids": [file_id],
+    }
+
+    # Return two-tuple for content_and_artifact format
+    return (content, artifacts)
