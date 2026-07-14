@@ -204,18 +204,13 @@ async def upload_to_librechat(
 def format_file_artifact(file_info: dict, text_message: Optional[str] = None) -> tuple:
     """Format file info as an MCP tool response with file artifact.
 
-    Returns a two-tuple [content, artifacts] for content_and_artifact format.
-    LangChain/LibreChat expects this exact format for file attachments.
+    Returns a two-tuple (text_string, artifacts) for content_and_artifact format.
+    LibreChat/LangChain expects this exact format:
 
-    Format:
     (
-        [  # content list
-            {"type": "text", "text": "Success message"},
-            {"type": "file", "file_id": "...", "filename": "...", "mimeType": "...", ...}
-        ],
-        {  # artifacts object
-            "files": [{file info}],
-            "file_ids": ["file_id"]
+        "Success message text",  # First element: plain string
+        {                        # Second element: artifacts object
+            "files": [{file info}]
         }
     )
 
@@ -224,7 +219,7 @@ def format_file_artifact(file_info: dict, text_message: Optional[str] = None) ->
         text_message: Optional text message to include with the file
 
     Returns:
-        Two-tuple (content_list, artifacts_dict) for content_and_artifact format
+        Two-tuple (text_string, artifacts_dict) for content_and_artifact format
     """
     file_id = file_info["file_id"]
     filename = file_info["filename"]
@@ -233,29 +228,10 @@ def format_file_artifact(file_info: dict, text_message: Optional[str] = None) ->
     file_bytes = file_info.get("bytes", 0)
     source = file_info.get("source", "local")
 
-    # Build content list
-    content = []
+    # First element: plain text string (not a list of content items)
+    text = text_message or f"File '{filename}' created successfully."
 
-    # Add text content if provided
-    if text_message:
-        content.append({
-            "type": "text",
-            "text": text_message,
-        })
-
-    # Add file content item
-    file_content_item = {
-        "type": "file",
-        "file_id": file_id,
-        "filename": filename,
-        "filepath": filepath,
-        "mimeType": mime_type,
-        "bytes": file_bytes,
-        "source": source,
-    }
-    content.append(file_content_item)
-
-    # Build artifacts object
+    # Second element: artifacts object with files array
     artifacts = {
         "files": [{
             "file_id": file_id,
@@ -264,9 +240,8 @@ def format_file_artifact(file_info: dict, text_message: Optional[str] = None) ->
             "mimeType": mime_type,
             "bytes": file_bytes,
             "source": source,
-        }],
-        "file_ids": [file_id],
+        }]
     }
 
     # Return two-tuple for content_and_artifact format
-    return (content, artifacts)
+    return (text, artifacts)
