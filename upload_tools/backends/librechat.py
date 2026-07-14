@@ -202,18 +202,20 @@ async def upload_to_librechat(
 
 
 def format_file_artifact(file_info: dict, text_message: Optional[str] = None):
-    """Format file info as an MCP CallToolResult with file artifact.
+    """Format file info using FastMCP ToolResult with structured_content.
 
-    Returns a CallToolResult directly to bypass FastMCP's response processing.
-    LibreChat will receive the proper MCP format with content and structuredContent.
+    Uses FastMCP's ToolResult class which handles the content_and_artifact
+    format properly. When structured_content is set, to_mcp_result() returns
+    a tuple (content, structured_content).
 
     Args:
         file_info: Dict returned by upload_to_librechat()
         text_message: Optional text message to include with the file
 
     Returns:
-        mcp.types.CallToolResult with content and structuredContent
+        FastMCP ToolResult that will be converted to proper MCP format
     """
+    from fastmcp.tools.base import ToolResult
     from mcp import types
 
     file_id = file_info["file_id"]
@@ -225,8 +227,8 @@ def format_file_artifact(file_info: dict, text_message: Optional[str] = None):
 
     text = text_message or f"File '{filename}' created successfully."
 
-    # Build file artifact for structuredContent
-    file_artifact = {
+    # Build artifacts dict for structured_content
+    artifacts = {
         "files": [{
             "file_id": file_id,
             "filename": filename,
@@ -234,13 +236,13 @@ def format_file_artifact(file_info: dict, text_message: Optional[str] = None):
             "mimeType": mime_type,
             "bytes": file_bytes,
             "source": source,
-        }]
+        }],
+        "file_ids": [file_id]
     }
 
-    # Return CallToolResult directly to bypass FastMCP processing
-    return types.CallToolResult(
-        content=[
-            types.TextContent(type="text", text=text)
-        ],
-        structuredContent=file_artifact,
+    # Return FastMCP ToolResult with structured_content
+    # When structured_content is set, to_mcp_result() returns tuple format
+    return ToolResult(
+        content=[types.TextContent(type="text", text=text)],
+        structured_content=artifacts,
     )
