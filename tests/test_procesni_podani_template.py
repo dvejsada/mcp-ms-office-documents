@@ -73,9 +73,13 @@ def _payload(spec, **overrides):
             "- smlouva ze dne 1. 1. 2026\n"
             "- výslech svědka Jana Nováka\n\n"
             "# PRÁVNÍ POSOUZENÍ\n\n"
+            "## K NÁROKU NA ÚROK Z PRODLENÍ\n\n"
             "3. Třetí odstavec podání.\n\n"
+            "4. Nárok je dán, neboť:\n"
+            "   1. pohledávka je splatná,\n"
+            "   2. žalovaný je v prodlení.\n\n"
             "# NÁVRH VÝROKU ROZHODNUTÍ\n\n"
-            "4. **S ohledem na výše uvedené žalobce navrhuje, aby nadepsaný "
+            "5. **S ohledem na výše uvedené žalobce navrhuje, aby nadepsaný "
             "soud vydal tento**"
         ),
         "petit": (
@@ -151,12 +155,15 @@ def test_body_maps_markdown_onto_firm_styles(template_path, spec):
     headings = _styled(doc, "Oddlslovn")
     assert [h.text for h in headings] == [
         "SKUTKOVÝ STAV", "PRÁVNÍ POSOUZENÍ", "NÁVRH VÝROKU ROZHODNUTÍ"]
+    assert [h.text for h in _styled(doc, "Pododdlslovn")] == [
+        "K NÁROKU NA ÚROK Z PRODLENÍ"]
 
     items = _styled(doc, "Odstavecslovn")
-    assert len(items) == 4
+    assert len(items) == 5
     # Numbered paragraphs continue across sections and across the interposed
     # Důkaz note and citation: the later list instances resume via
-    # startOverride instead of restarting at 1.
+    # startOverride instead of restarting at 1. (Items 3 and 4 share one
+    # instance; the blank line between them does not split the list.)
     num_root = doc.part.numbering_part.element
     overrides = []
     for p in items:
@@ -165,7 +172,15 @@ def test_body_maps_markdown_onto_firm_styles(template_path, spec):
         num = num_root.num_having_numId(int(num_ids[0]))
         vals = num.xpath('./w:lvlOverride[@w:ilvl="0"]/w:startOverride/@w:val')
         overrides.append(vals[0] if vals else None)
-    assert overrides == ["1", "1", "3", "4"]
+    assert overrides == ["1", "1", "3", "3", "5"]
+
+    # Sub-paragraphs (second numbering level a., b.) use the Pododstavec
+    # style and sit at ilvl 1.
+    subs = _styled(doc, "Pododstavec")
+    assert [p.text for p in subs] == [
+        "pohledávka je splatná,", "žalovaný je v prodlení."]
+    for p in subs:
+        assert p._p.xpath(".//w:numPr/w:ilvl/@w:val") == ["1"]
 
     # Evidence: a "Důkaz:" label followed by a bulleted list of the items.
     assert [p.text for p in _styled(doc, "Dkazy")] == ["Důkaz:"]

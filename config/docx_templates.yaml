@@ -458,6 +458,9 @@ templates:
           - Číslované odstavce podání piš jako položky seznamu "1. Text.";
             číslování MUSÍ navazovat napříč oddíly — v dalším oddíle pokračuj
             např. "5. …", nezačínej znovu od 1.
+          - Podbody (druhá úroveň číslování a., b., …) piš jako vnořený seznam
+            odsazený třemi mezerami hned pod nadřazeným odstavcem, bez
+            prázdných řádků mezi podbody (viz příklad u odstavce 4).
           - Mezi nadpisy, odstavci a dalšími bloky nech vždy prázdný řádek.
           - Důkazy vlož za odstavec, k němuž se vážou: nejprve samostatný
             odstavec s návětím "Důkaz:" (či "Důkazy:") uvozený řádkem
@@ -485,11 +488,17 @@ templates:
 
           # PRÁVNÍ POSOUZENÍ
 
+          ## K NÁROKU NA ÚROK Z PRODLENÍ
+
           3. Podle § 1970 občanského zákoníku…
+
+          4. Nárok žalobce je dán, neboť:
+             1. pohledávka je splatná,
+             2. žalovaný je v prodlení.
 
           # NÁVRH VÝROKU ROZHODNUTÍ
 
-          4. **S ohledem na výše uvedené žalobce navrhuje, aby nadepsaný soud vydal tento**
+          5. **S ohledem na výše uvedené žalobce navrhuje, aby nadepsaný soud vydal tento**
       - name: ma_petit
         type: bool
         required: false
