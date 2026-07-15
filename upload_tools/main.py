@@ -47,6 +47,7 @@ def upload_file(
     suffix: str,
     filename: str | None = None,
     user_context: dict | None = None,
+    add_unique_prefix: bool = False,
 ) -> Union[str, dict]:
     """Upload a file to configured backend and return appropriate response.
 
@@ -56,12 +57,13 @@ def upload_file(
     :param file_object: File-like object to upload
     :param suffix: File extension (e.g., 'pptx', 'docx', 'xlsx', 'eml')
     :param filename: Optional human-readable filename (without extension). When provided,
-        the uploaded object will use this name (sanitized) with a short UUID prefix instead
-        of a full UUID.
+        the uploaded object will use this name (sanitized).
     :param user_context: Optional dict with user info for LIBRECHAT strategy:
         - user_id: Required for LIBRECHAT
         - user_email: Optional
         - conversation_id: Optional
+    :param add_unique_prefix: If True, adds 8-char UUID prefix to filename for uniqueness.
+        Default False - LibreChat handles uniqueness with its own UUID prefix.
     :return: Status message with download URL or save location (str for traditional backends)
     :raises RuntimeError: If upload fails or LIBRECHAT strategy used without async
     """
@@ -73,7 +75,7 @@ def upload_file(
 
     try:
         if filename:
-            object_name = generate_named_object_name(filename, suffix)
+            object_name = generate_named_object_name(filename, suffix, add_unique_prefix)
         else:
             object_name = generate_unique_object_name(suffix)
     except Exception as e:
@@ -112,6 +114,7 @@ async def upload_file_async(
     suffix: str,
     filename: str | None = None,
     user_context: dict | None = None,
+    add_unique_prefix: bool = False,
 ) -> Union[str, dict]:
     """Async upload a file to configured backend.
 
@@ -121,12 +124,13 @@ async def upload_file_async(
     :param file_object: File-like object to upload
     :param suffix: File extension (e.g., 'pptx', 'docx', 'xlsx', 'eml')
     :param filename: Optional human-readable filename (without extension). When provided,
-        the uploaded object will use this name (sanitized) with a short UUID prefix instead
-        of a full UUID.
+        the uploaded object will use this name (sanitized).
     :param user_context: Dict with user info (required for LIBRECHAT):
         - user_id: Required for LIBRECHAT
         - user_email: Optional
         - conversation_id: Optional
+    :param add_unique_prefix: If True, adds 8-char UUID prefix to filename for uniqueness.
+        Default False - LibreChat handles uniqueness with its own UUID prefix.
     :return: URL string (traditional backends) or dict with file metadata (LIBRECHAT)
     :raises RuntimeError: If upload fails
     :raises ValueError: If LIBRECHAT used without user_context
@@ -134,7 +138,7 @@ async def upload_file_async(
     # Generate object name
     try:
         if filename:
-            object_name = generate_named_object_name(filename, suffix)
+            object_name = generate_named_object_name(filename, suffix, add_unique_prefix)
         else:
             object_name = generate_unique_object_name(suffix)
     except Exception as e:
