@@ -294,7 +294,7 @@ Nesting and combinations work, e.g. `**bold with *italic* inside**`, `**~~bold s
 This paragraph uses the "Callout" style from your template.
 ```
 
-The `<!-- style: Name -->` directive applies a style to the next block only (every item of a list, or the table). Unknown styles fall back to the default with a warning. To remap styles globally or per template, see [Custom Templates](#-custom-templates).
+The `<!-- style: Name -->` directive applies a style to the next block only — one paragraph, one heading, the whole table, or the top-level items of a list (nested items keep the `List Bullet 2/3` / `List Number 2/3` styles). On a numbered list the style's **own numbering** is used: the list restarts at `1.` with the style's numeral format and indents. The directive must be alone on its line, and the name must match the Word style name exactly. Unknown styles fall back to the default with a warning. To remap styles globally or per template, see [Custom Templates](#-custom-templates).
 
 </details>
 
