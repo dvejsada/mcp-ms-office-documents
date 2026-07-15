@@ -3,6 +3,7 @@ This module contains process_markdown_content and process_markdown_block which
 orchestrate all block-level and inline parsing into a python-docx Document.
 """
 import logging
+from dataclasses import replace
 from docx.oxml.ns import qn
 from docx.text.paragraph import Paragraph
 from .patterns import (
@@ -173,6 +174,20 @@ def _add_heading(doc, level, content, style_map):
     heading = add_mapped_heading(doc, min(level, 6), style_map)
     parse_inline_formatting(content, heading)
     return heading
+
+
+def _has_explicit_style(element):
+    """True if *element* is a paragraph carrying an explicit ``w:pStyle``.
+
+    Used by the style-directive branch to spot list items that were already
+    styled through the overridden style map. Note python-docx drops ``w:pStyle``
+    when a style application falls back to the document default ("Normal"), so
+    such paragraphs are (harmlessly) re-styled by the caller.
+    """
+    if element.tag != qn('w:p'):
+        return False
+    ppr = element.find(qn('w:pPr'))
+    return ppr is not None and ppr.find(qn('w:pStyle')) is not None
 
 
 def _add_quote(doc, content, style_map):
@@ -378,16 +393,39 @@ def process_markdown_block(doc, lines, start_idx, return_element=True,
             # inserted before the trailing <w:sectPr>, so positional slicing would be
             # unreliable.
             existing = None if return_element else set(body)
+            # A style directive targeting a LIST is applied through the style map
+            # (top level only) rather than stamped onto every produced paragraph
+            # afterwards: nested items keep their own mapped level styles instead
+            # of being flattened, and ordered-list numbering resolves from the
+            # directive style itself, keeping its numeral format and indents.
+            style_name = collected.get('style')
+            target = lines[idx].strip()
+            styles_via_map = bool(style_name) and bool(
+                ORDERED_LIST_PATTERN.match(target)
+                or UNORDERED_LIST_PATTERN.match(target))
+            block_style_map = style_map
+            if styles_via_map:
+                block_style_map = replace(
+                    style_map,
+                    list_number=(style_name,) + tuple(style_map.list_number[1:]),
+                    list_bullet=(style_name,) + tuple(style_map.list_bullet[1:]),
+                )
             new_idx, block_elems = process_markdown_block(
-                doc, lines, idx, return_element=return_element, style_map=style_map,
-                directives=collected, ordered_run=ordered_run,
+                doc, lines, idx, return_element=return_element,
+                style_map=block_style_map, directives=collected,
+                ordered_run=ordered_run,
             )
             # The 'style' directive applies the named style to whatever was produced.
-            style_name = collected.get('style')
             if style_name:
                 produced = (block_elems if return_element
                             else [el for el in body if el not in existing])
                 for el in produced:
+                    # A list item already styled via the overridden style map (or a
+                    # nested level's own mapped style) carries an explicit pStyle —
+                    # leave it alone. A numbered line that rendered as plain prose
+                    # (e.g. a standalone date) has none and still gets the style.
+                    if styles_via_map and _has_explicit_style(el):
+                        continue
                     apply_style_to_block_element(doc, el, style_name)
             if return_element:
                 elements.extend(block_elems)
