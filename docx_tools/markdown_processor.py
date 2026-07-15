@@ -107,7 +107,10 @@ def process_markdown_content(doc, content, return_elements=False,
                         doc._body._body.remove(p._p)
             continue
         # --- Soft line breaks (trailing two spaces) ---
-        if line.endswith('  '):
+        # A complete <!-- --> comment line is exempt: trailing spaces after the
+        # closing marker must not turn a directive (or a comment to be skipped)
+        # into soft-break prose that renders the comment text literally.
+        if line.endswith('  ') and not _is_complete_comment(line):
             paragraph_lines = []
             while i < n:
                 current_line = lines[i]
@@ -149,7 +152,7 @@ def process_markdown_content(doc, content, return_elements=False,
         # update the count via process_list_items. An unclosed "<!--" is not a
         # comment (it renders as literal prose), so it resets like any prose.
         stripped = line.strip()
-        is_comment_line = stripped.startswith('<!--') and stripped.endswith('-->')
+        is_comment_line = _is_complete_comment(line)
         if (HEADING_PATTERN.match(stripped) is None
                 and ORDERED_LIST_PATTERN.match(stripped) is None
                 and not stripped.startswith('>')
@@ -174,6 +177,12 @@ def _add_heading(doc, level, content, style_map):
     heading = add_mapped_heading(doc, min(level, 6), style_map)
     parse_inline_formatting(content, heading)
     return heading
+
+
+def _is_complete_comment(line):
+    """True if *line* (ignoring surrounding whitespace) is a whole ``<!-- -->``."""
+    stripped = line.strip()
+    return stripped.startswith('<!--') and stripped.endswith('-->')
 
 
 def _has_explicit_style(element):
@@ -400,16 +409,19 @@ def process_markdown_block(doc, lines, start_idx, return_element=True,
             # directive style itself, keeping its numeral format and indents.
             style_name = collected.get('style')
             target = lines[idx].strip()
-            styles_via_map = bool(style_name) and bool(
-                ORDERED_LIST_PATTERN.match(target)
-                or UNORDERED_LIST_PATTERN.match(target))
+            target_is_ordered = bool(ORDERED_LIST_PATTERN.match(target))
+            styles_via_map = bool(style_name) and (
+                target_is_ordered or bool(UNORDERED_LIST_PATTERN.match(target)))
             block_style_map = style_map
             if styles_via_map:
-                block_style_map = replace(
-                    style_map,
-                    list_number=(style_name,) + tuple(style_map.list_number[1:]),
-                    list_bullet=(style_name,) + tuple(style_map.list_bullet[1:]),
-                )
+                if target_is_ordered:
+                    block_style_map = replace(
+                        style_map,
+                        list_number=(style_name,) + tuple(style_map.list_number[1:]))
+                else:
+                    block_style_map = replace(
+                        style_map,
+                        list_bullet=(style_name,) + tuple(style_map.list_bullet[1:]))
             new_idx, block_elems = process_markdown_block(
                 doc, lines, idx, return_element=return_element,
                 style_map=block_style_map, directives=collected,

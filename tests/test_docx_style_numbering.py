@@ -192,6 +192,32 @@ def test_resolver_prefers_style_name_over_builtins():
     assert ilvl == 0
 
 
+def test_decimal_fallback_scan_survives_unregistered_abstract_elements():
+    """Priority-3 fallback: no usable list styles, but a decimal abstractNum exists.
+
+    ``w:abstractNum`` has no registered oxml class, so ``w:``-prefixed xpath on
+    it raises XPathEvalError — the scan must use qualified-name lookups. Deleting
+    the built-in numbered styles forces resolution onto this path.
+    """
+    doc = Document()
+    doc.part.numbering_part  # materialise the numbering part (holds decimal abstracts)
+    for name in ("List Number", "List Number 2", "List Number 3"):
+        doc.styles[name].delete()
+
+    abstract_id, ilvl, root = resolve_ordered_numbering(doc, level=0)
+
+    assert abstract_id is not None and root is not None
+    assert ilvl == 0
+    # The returned abstract really is decimal at ilvl 0.
+    fmts = root.xpath(
+        f'./w:abstractNum[@w:abstractNumId="{abstract_id}"]'
+        f'/w:lvl[@w:ilvl="0"]/w:numFmt/@w:val')
+    assert fmts == ["decimal"]
+    # And rendering still attaches restart numbering end-to-end.
+    process_markdown_content(doc, "1. one\n2. two\n")
+    assert _abstract_of_para(doc, _para(doc, "one")) == str(abstract_id)
+
+
 def test_resolver_follows_based_on_chain():
     """A style without its own numPr inherits the numbering of its base style."""
     doc = Document()

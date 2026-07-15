@@ -116,6 +116,24 @@ def test_stacked_directives_compose_on_a_table():
     assert table.rows[0].cells[1].width > table.rows[0].cells[0].width
 
 
+def test_directive_with_trailing_spaces_still_applies():
+    """Trailing spaces after ``-->`` must not demote the directive to soft-break
+    prose (which would render the comment text literally)."""
+    doc = _doc("Callout")
+    start = len(doc.paragraphs)
+    process_markdown_content(doc, "<!-- style: Callout -->  \nhello\n")
+    assert _style_of(doc, start, "hello") == "Callout"
+    assert not any("<!--" in p.text for p in doc.paragraphs[start:])
+
+
+def test_nondirective_comment_with_trailing_spaces_is_skipped():
+    doc = Document()
+    start = len(doc.paragraphs)
+    process_markdown_content(doc, "before\n\n<!-- a note -->  \nafter\n")
+    texts = [p.text for p in doc.paragraphs[start:] if p.text]
+    assert texts == ["before", "after"]
+
+
 def test_nondirective_comment_is_skipped_not_rendered():
     doc = Document()
     start = len(doc.paragraphs)

@@ -111,11 +111,19 @@ def _clamp_ilvl(numbering_root, abstract_num_id, ilvl):
 
 
 def _find_decimal_abstract(numbering_root):
-    """Return the id of any existing decimal abstractNum, or ``None``."""
-    for abstract in numbering_root.xpath('./w:abstractNum'):
-        fmt = abstract.xpath('./w:lvl[@w:ilvl="0"]/w:numFmt/@w:val')
-        if fmt and fmt[0] == 'decimal':
-            return abstract.get(qn('w:abstractNumId'))
+    """Return the id of any existing decimal abstractNum, or ``None``.
+
+    Uses qualified-name ``findall`` rather than ``.xpath('./w:…')`` because
+    ``<w:abstractNum>`` has no registered oxml class — on plain lxml elements
+    the ``w:`` prefix is undefined and such an xpath raises.
+    """
+    for abstract in numbering_root.findall(qn('w:abstractNum')):
+        for lvl in abstract.findall(qn('w:lvl')):
+            if lvl.get(qn('w:ilvl')) != '0':
+                continue
+            fmt = lvl.find(qn('w:numFmt'))
+            if fmt is not None and fmt.get(qn('w:val')) == 'decimal':
+                return abstract.get(qn('w:abstractNumId'))
     return None
 
 
