@@ -47,6 +47,8 @@ Just ask your AI to _"create a sales presentation"_ or _"draft a welcome email"_
 
 All tools accept an optional **`file_name`** parameter. When provided, the output file will use that name (without extension) instead of a randomly generated identifier.
 
+All tools also accept an optional **`add_unique_prefix`** parameter (default `false`). When `false`, filenames are clean without UUID prefix (e.g., `My_Report.docx`). When `true`, adds an 8-character UUID prefix for server-side uniqueness (e.g., `ff8ae81d_My_Report.docx`). In most cases, the default is sufficient because LibreChat adds its own UUID prefix during file storage.
+
 **Bonus — Dynamic Templates:**
 
 - 📧 **Reusable Email Templates** — Define parameterized email layouts in YAML. Each becomes its own tool with typed arguments (e.g., `first_name`, `promo_code`).
