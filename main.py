@@ -16,9 +16,7 @@ from middleware import ApiKeyAuthMiddleware
 from async_runner import run_blocking
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse
-from upload_tools import is_librechat_strategy, upload_file_async
-from librechat_integration import extract_user_context_from_request
-from upload_tools.backends.librechat import format_file_artifact
+from librechat_integration import extract_user_context_from_request, upload_and_format_response
 
 import logging
 mcp = FastMCP("MCP Office Documents")
@@ -165,37 +163,27 @@ async def create_excel_document(
     logger.info("Converting markdown to Excel document")
 
     try:
-        if is_librechat_strategy():
-            # LibreChat mode: create buffer, upload to LibreChat, return file artifact
-            user_context = extract_user_context_from_request()
-            
-            # Generate document buffer
-            file_buffer = await run_blocking(
-                _markdown_to_excel_buffer,
-                markdown_content,
-                auto_filter=auto_filter,
-            )
-            
-            # Upload to LibreChat
-            file_info = await upload_file_async(
-                file_buffer,
-                "xlsx",
-                filename=file_name,
-                user_context=user_context,
-                add_unique_prefix=add_unique_prefix,
-            )
-            file_buffer.close()
-            
-            logger.info("Excel document uploaded to LibreChat successfully")
-            return format_file_artifact(
-                file_info,
-                f"Excel spreadsheet '{file_name or 'spreadsheet'}' created successfully."
-            )
-        else:
-            # Traditional mode: use existing upload logic
-            result = await run_blocking(markdown_to_excel, markdown_content, file_name=file_name, auto_filter=auto_filter)
-            logger.info("Excel document uploaded successfully")
-            return result
+        # Generate document buffer
+        file_buffer = await run_blocking(
+            _markdown_to_excel_buffer,
+            markdown_content,
+            auto_filter=auto_filter,
+        )
+        
+        # Upload and format response (handles both LIBRECHAT and traditional backends)
+        user_context = extract_user_context_from_request()
+        result = await upload_and_format_response(
+            file_buffer,
+            "xlsx",
+            file_name,
+            user_context,
+            f"Excel spreadsheet '{file_name or 'spreadsheet'}' created successfully.",
+            add_unique_prefix=add_unique_prefix,
+        )
+        file_buffer.close()
+        
+        logger.info("Excel document created successfully")
+        return result
     except Exception as e:
         logger.error(f"Error creating Excel document: {e}", exc_info=True)
         raise ToolError(f"Error creating Excel document: {e}")
@@ -267,52 +255,32 @@ async def create_word_document(
     logger.info("Converting markdown to Word document")
 
     try:
-        if is_librechat_strategy():
-            # LibreChat mode: create buffer, upload to LibreChat, return file artifact
-            user_context = extract_user_context_from_request()
-            
-            # Generate document buffer
-            file_buffer = await run_blocking(
-                _markdown_to_word_buffer,
-                markdown_content,
-                title=title,
-                author=author,
-                subject=subject,
-                header_text=header_text,
-                footer_text=footer_text,
-                include_toc=include_toc or False,
-            )
-            
-            # Upload to LibreChat
-            file_info = await upload_file_async(
-                file_buffer,
-                "docx",
-                filename=file_name,
-                user_context=user_context,
-                add_unique_prefix=add_unique_prefix,
-            )
-            file_buffer.close()
-            
-            logger.info("Word document uploaded to LibreChat successfully")
-            return format_file_artifact(
-                file_info,
-                f"Word document '{title or file_name or 'document'}' created successfully."
-            )
-        else:
-            # Traditional mode: use existing upload logic
-            result = await run_blocking(
-                markdown_to_word,
-                markdown_content,
-                title=title,
-                author=author,
-                subject=subject,
-                header_text=header_text,
-                footer_text=footer_text,
-                include_toc=include_toc or False,
-                file_name=file_name,
-            )
-            logger.info("Word document uploaded successfully")
-            return result
+        # Generate document buffer
+        file_buffer = await run_blocking(
+            _markdown_to_word_buffer,
+            markdown_content,
+            title=title,
+            author=author,
+            subject=subject,
+            header_text=header_text,
+            footer_text=footer_text,
+            include_toc=include_toc or False,
+        )
+        
+        # Upload and format response (handles both LIBRECHAT and traditional backends)
+        user_context = extract_user_context_from_request()
+        result = await upload_and_format_response(
+            file_buffer,
+            "docx",
+            file_name,
+            user_context,
+            f"Word document '{title or file_name or 'document'}' created successfully.",
+            add_unique_prefix=add_unique_prefix,
+        )
+        file_buffer.close()
+        
+        logger.info("Word document created successfully")
+        return result
     except Exception as e:
         logger.error(f"Error creating Word document: {e}", exc_info=True)
         raise ToolError(f"Error creating Word document: {e}")
@@ -360,45 +328,29 @@ Inline markdown formatting is supported in text fields (slide_text, quote_text, 
     logger.info(f"Creating PowerPoint presentation with {len(slides)} slides in {format} format")
 
     try:
-        if is_librechat_strategy():
-            # LibreChat mode: create buffer, upload to LibreChat, return file artifact
-            user_context = extract_user_context_from_request()
-            
-            # Generate presentation buffer
-            file_buffer = await run_blocking(
-                _create_presentation_buffer,
-                slides, format,
-                author=author,
-                footer_text=footer_text,
-                show_slide_numbers=show_slide_numbers,
-            )
-            
-            # Upload to LibreChat
-            file_info = await upload_file_async(
-                file_buffer,
-                "pptx",
-                filename=file_name,
-                user_context=user_context,
-                add_unique_prefix=add_unique_prefix,
-            )
-            file_buffer.close()
-            
-            logger.info("PowerPoint presentation uploaded to LibreChat successfully")
-            return format_file_artifact(
-                file_info,
-                f"PowerPoint presentation '{file_name or 'presentation'}' with {len(slides)} slides created successfully."
-            )
-        else:
-            # Traditional mode: use existing upload logic
-            result = await run_blocking(
-                create_presentation, slides, format,
-                file_name=file_name,
-                author=author,
-                footer_text=footer_text,
-                show_slide_numbers=show_slide_numbers,
-            )
-            logger.info(f"PowerPoint presentation created: {result}")
-            return result
+        # Generate presentation buffer
+        file_buffer = await run_blocking(
+            _create_presentation_buffer,
+            slides, format,
+            author=author,
+            footer_text=footer_text,
+            show_slide_numbers=show_slide_numbers,
+        )
+        
+        # Upload and format response (handles both LIBRECHAT and traditional backends)
+        user_context = extract_user_context_from_request()
+        result = await upload_and_format_response(
+            file_buffer,
+            "pptx",
+            file_name,
+            user_context,
+            f"PowerPoint presentation '{file_name or 'presentation'}' with {len(slides)} slides created successfully.",
+            add_unique_prefix=add_unique_prefix,
+        )
+        file_buffer.close()
+        
+        logger.info("PowerPoint presentation created successfully")
+        return result
     except Exception as e:
         logger.error(f"Error creating PowerPoint presentation: {e}", exc_info=True)
         raise ToolError(f"Error creating PowerPoint presentation: {e}")
@@ -431,52 +383,32 @@ async def create_email_draft(
     logger.info(f"Creating email draft with subject: {subject}")
 
     try:
-        if is_librechat_strategy():
-            # LibreChat mode: create buffer, upload to LibreChat, return file artifact
-            user_context = extract_user_context_from_request()
-            
-            # Generate email buffer
-            file_buffer = await run_blocking(
-                _create_eml_buffer,
-                to=to,
-                cc=cc,
-                bcc=bcc,
-                re=subject,
-                content=content,
-                priority=priority,
-                language=language,
-            )
-            
-            # Upload to LibreChat
-            file_info = await upload_file_async(
-                file_buffer,
-                "eml",
-                filename=file_name,
-                user_context=user_context,
-                add_unique_prefix=add_unique_prefix,
-            )
-            file_buffer.close()
-            
-            logger.info("Email draft uploaded to LibreChat successfully")
-            return format_file_artifact(
-                file_info,
-                f"Email draft '{subject}' created successfully."
-            )
-        else:
-            # Traditional mode: use existing upload logic
-            result = await run_blocking(
-                create_eml,
-                to=to,
-                cc=cc,
-                bcc=bcc,
-                re=subject,
-                content=content,
-                priority=priority,
-                language=language,
-                file_name=file_name,
-            )
-            logger.info(f"Email draft created: {result}")
-            return result
+        # Generate email buffer
+        file_buffer = await run_blocking(
+            _create_eml_buffer,
+            to=to,
+            cc=cc,
+            bcc=bcc,
+            re=subject,
+            content=content,
+            priority=priority,
+            language=language,
+        )
+        
+        # Upload and format response (handles both LIBRECHAT and traditional backends)
+        user_context = extract_user_context_from_request()
+        result = await upload_and_format_response(
+            file_buffer,
+            "eml",
+            file_name,
+            user_context,
+            f"Email draft '{subject}' created successfully.",
+            add_unique_prefix=add_unique_prefix,
+        )
+        file_buffer.close()
+        
+        logger.info("Email draft created successfully")
+        return result
     except Exception as e:
         logger.error(f"Error creating email draft: {e}", exc_info=True)
         raise ToolError(f"Error creating email draft: {e}")
@@ -504,36 +436,26 @@ async def create_xml_document(
     logger.info("Creating XML file")
 
     try:
-        if is_librechat_strategy():
-            # LibreChat mode: create buffer, upload to LibreChat, return file artifact
-            user_context = extract_user_context_from_request()
-            
-            # Generate XML buffer
-            file_buffer = await run_blocking(
-                _create_xml_buffer,
-                xml_content,
-            )
-            
-            # Upload to LibreChat
-            file_info = await upload_file_async(
-                file_buffer,
-                "xml",
-                filename=file_name,
-                user_context=user_context,
-                add_unique_prefix=add_unique_prefix,
-            )
-            file_buffer.close()
-            
-            logger.info("XML file uploaded to LibreChat successfully")
-            return format_file_artifact(
-                file_info,
-                f"XML file '{file_name or 'document'}' created successfully."
-            )
-        else:
-            # Traditional mode: use existing upload logic
-            result = await run_blocking(create_xml_file, xml_content, file_name=file_name)
-            logger.info("XML file created successfully.")
-            return result
+        # Generate XML buffer
+        file_buffer = await run_blocking(
+            _create_xml_buffer,
+            xml_content,
+        )
+        
+        # Upload and format response (handles both LIBRECHAT and traditional backends)
+        user_context = extract_user_context_from_request()
+        result = await upload_and_format_response(
+            file_buffer,
+            "xml",
+            file_name,
+            user_context,
+            f"XML file '{file_name or 'document'}' created successfully.",
+            add_unique_prefix=add_unique_prefix,
+        )
+        file_buffer.close()
+        
+        logger.info("XML file created successfully")
+        return result
     except Exception as e:
         logger.error(f"Error creating XML file: {e}", exc_info=True)
         raise ToolError(f"Error creating XML file: {e}")

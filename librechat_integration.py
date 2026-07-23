@@ -9,7 +9,7 @@ import logging
 from typing import Optional, Union
 
 from upload_tools import upload_file_async, is_librechat_strategy
-from upload_tools.backends.librechat import format_file_artifact, get_mime_type
+from upload_tools.backends.librechat import format_file_artifact
 
 logger = logging.getLogger(__name__)
 
@@ -63,50 +63,13 @@ def extract_user_context_from_request() -> dict:
         }
 
 
-def extract_user_context(ctx=None) -> dict:
-    """Extract user context from FastMCP Context or current HTTP request.
-
-    This function tries multiple methods to get user context:
-    1. From FastMCP Context's request_context (if ctx provided)
-    2. From get_http_request() (fallback)
-
-    LibreChat sends user information via HTTP headers:
-    - X-User-Id: Required - LibreChat user ID
-    - X-User-Email: Optional - User email
-    - X-Conversation-Id: Optional - Current conversation ID
-
-    Args:
-        ctx: Optional FastMCP Context object
-
-    Returns:
-        Dict with user_id, user_email, and conversation_id (may be None)
-    """
-    # Try to get headers from Context first
-    if ctx is not None:
-        try:
-            # Try request_context.request.headers
-            if hasattr(ctx, "request_context") and ctx.request_context:
-                rc = ctx.request_context
-                if hasattr(rc, "request") and rc.request:
-                    headers = rc.request.headers if hasattr(rc.request, "headers") else {}
-                    return {
-                        "user_id": headers.get("x-user-id"),
-                        "user_email": headers.get("x-user-email"),
-                        "conversation_id": headers.get("x-conversation-id"),
-                    }
-        except Exception as e:
-            logger.debug("Could not get headers from Context: %s", e)
-
-    # Fallback to get_http_request()
-    return extract_user_context_from_request()
-
-
 async def upload_and_format_response(
     file_buffer: io.BytesIO,
     suffix: str,
     filename: Optional[str],
     user_context: dict,
     success_message: str,
+    add_unique_prefix: bool | None = None,
 ) -> Union[str, dict]:
     """Upload a file and format the response appropriately.
 
@@ -119,6 +82,8 @@ async def upload_and_format_response(
         filename: Human-readable filename (without extension) or None
         user_context: Dict from extract_user_context()
         success_message: Message to include in file artifact response
+        add_unique_prefix: If True, adds UUID prefix. If None, uses strategy-based default
+            (True for traditional backends, False for LIBRECHAT).
 
     Returns:
         str (URL) for traditional backends, or dict (file artifact) for LIBRECHAT
@@ -137,6 +102,7 @@ async def upload_and_format_response(
             suffix,
             filename=filename,
             user_context=user_context,
+            add_unique_prefix=add_unique_prefix,
         )
 
         # Format as MCP file artifact
@@ -144,32 +110,4 @@ async def upload_and_format_response(
     else:
         # Traditional upload - returns URL string
         from upload_tools import upload_file
-        return upload_file(file_buffer, suffix, filename=filename)
-
-
-def create_file_artifact_response(
-    file_info: dict,
-    text_message: str,
-) -> dict:
-    """Create an MCP file artifact response.
-
-    Args:
-        file_info: Dict with file_id, filename, type, bytes, etc.
-        text_message: Text message to include
-
-    Returns:
-        MCP response dict with content array
-    """
-    return format_file_artifact(file_info, text_message)
-
-
-def get_document_mime_type(suffix: str) -> str:
-    """Get MIME type for a document extension.
-
-    Args:
-        suffix: File extension without dot (e.g., 'docx', 'xlsx')
-
-    Returns:
-        MIME type string
-    """
-    return get_mime_type(f"file.{suffix}")
+        return upload_file(file_buffer, suffix, filename=filename, add_unique_prefix=add_unique_prefix)
