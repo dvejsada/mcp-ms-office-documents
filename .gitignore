@@ -51,3 +51,6 @@ config/
 *.tmp
 # FastHTML session key (admin UI)
 .sesskey
+
+# Agent Zero project files (local only)
+.a0proj/

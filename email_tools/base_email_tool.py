@@ -35,15 +35,20 @@ def _load_template() -> str:
         raise
 
 
-def create_eml(to=None, cc=None, bcc=None, re=None, content=None, priority="normal", language="cs-CZ", file_name=None):
-    """Create an unsent email draft (EML) using a Mustache HTML template.
+def _create_eml_buffer(to=None, cc=None, bcc=None, re=None, content=None, priority="normal", language="cs-CZ") -> io.BytesIO:
+    """Create an unsent email draft (EML) and return as BytesIO buffer.
+
+    This function is useful when the caller needs to handle upload separately,
+    such as for LibreChat file artifact uploads.
 
     Template variables:
       {{language}}  - inserted into lang attributes (sanitized)
       {{subject}}   - inserted (HTML-escaped) into <title>
       {{{content}}} - raw HTML fragment for email body (caller restricted to allowed tags)
-    """
 
+    Returns:
+        BytesIO buffer containing the EML file (position at start)
+    """
     # Validate priority
     if priority and priority.lower() not in ["low", "normal", "high"]:
         raise ValueError("Priority must be 'low', 'normal', or 'high'")
@@ -53,7 +58,6 @@ def create_eml(to=None, cc=None, bcc=None, re=None, content=None, priority="norm
     if not re:
         raise ValueError("Email subject is required")
 
-    buffer = None
     try:
         template_html = _load_template()
 
@@ -61,16 +65,15 @@ def create_eml(to=None, cc=None, bcc=None, re=None, content=None, priority="norm
         safe_language = (language or "").replace('"', '').replace("'", '')
         escaped_subject = html.escape(re or "")
 
-        renderer = pystache.Renderer(escape=lambda u: u)  # We'll manually escape where needed
+        renderer = pystache.Renderer(escape=lambda u: u)
         context = {
-            "language": safe_language,   # safe for attribute insertion
-            "subject": escaped_subject,  # already escaped
-            "content": content,          # inserted unescaped via triple braces {{{content}}}
+            "language": safe_language,
+            "subject": escaped_subject,
+            "content": content,
         }
         complete_html = renderer.render(template_html, context)
 
         msg = MIMEText(complete_html, 'html', 'utf-8')
-        # Ensure proper encoding (base64 avoids quoted-printable soft breaks generating '=')
         if 'Content-Transfer-Encoding' in msg:
             msg.replace_header('Content-Transfer-Encoding', 'base64')
         else:
@@ -103,7 +106,26 @@ def create_eml(to=None, cc=None, bcc=None, re=None, content=None, priority="norm
         msg_bytes = msg.as_bytes()
         buffer.write(msg_bytes)
         buffer.seek(0)
+        return buffer
+    except Exception as e:
+        logger.error("Failed to create email draft buffer: %s", e, exc_info=True)
+        raise RuntimeError(f"Failed to create email draft: {e}") from e
 
+
+def create_eml(to=None, cc=None, bcc=None, re=None, content=None, priority="normal", language="cs-CZ", file_name=None):
+    """Create an unsent email draft (EML) using a Mustache HTML template.
+
+    Template variables:
+      {{language}}  - inserted into lang attributes (sanitized)
+      {{subject}}   - inserted (HTML-escaped) into <title>
+      {{{content}}} - raw HTML fragment for email body (caller restricted to allowed tags)
+    """
+    buffer = None
+    try:
+        buffer = _create_eml_buffer(
+            to=to, cc=cc, bcc=bcc, re=re,
+            content=content, priority=priority, language=language
+        )
         return upload_file(buffer, "eml", filename=file_name)
     except Exception as e:
         logger.error("Failed to create email draft: %s", e, exc_info=True)

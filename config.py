@@ -213,6 +213,39 @@ class MinioSettings(BaseModel):
         return self
 
 
+class LibreChatSettings(BaseModel):
+    """Configuration for LibreChat file service uploads.
+
+    When UPLOAD_STRATEGY is set to LIBRECHAT, documents are uploaded to
+    LibreChat's service endpoint and returned as MCP file artifacts that
+    appear as attachments in the chat UI.
+
+    Required environment variables:
+    - LIBRECHAT_SERVICE_URL: Full URL to the service files endpoint
+      (e.g., http://api:3080/api/service/files)
+    - LIBRECHAT_SERVICE_TOKEN: Service token for authentication
+      (must match MCP_SERVICE_TOKEN in LibreChat's .env)
+    """
+    service_url: str = Field(description="LibreChat service files endpoint URL")
+    service_token: str = Field(description="Service token for authentication")
+
+    @model_validator(mode="after")
+    def _non_empty(self) -> "LibreChatSettings":
+        """Ensure all required LibreChat fields are non-empty."""
+        missing = [
+            name for name, val in (
+                ("LIBRECHAT_SERVICE_URL", self.service_url),
+                ("LIBRECHAT_SERVICE_TOKEN", self.service_token),
+            ) if not str(val).strip()
+        ]
+        if missing:
+            raise ValueError(f"Missing required LibreChat settings: {', '.join(missing)}")
+        # Normalize values
+        self.service_url = self.service_url.strip().rstrip("/")
+        self.service_token = self.service_token.strip()
+        return self
+
+
 class StorageStrategy(str, Enum):
     """Supported upload backends for produced documents."""
     LOCAL = "LOCAL"
@@ -220,6 +253,7 @@ class StorageStrategy(str, Enum):
     GCS = "GCS"
     AZURE = "AZURE"
     MINIO = "MINIO"
+    LIBRECHAT = "LIBRECHAT"
 
 
 class StorageSettings(BaseModel):
@@ -236,6 +270,7 @@ class StorageSettings(BaseModel):
     gcs: Optional[GCSSettings] = None
     azure: Optional[AzureSettings] = None
     minio: Optional[MinioSettings] = None
+    librechat: Optional[LibreChatSettings] = None
 
     @model_validator(mode="after")
     def validate_strategy_requirements(self) -> "StorageSettings":
@@ -252,6 +287,9 @@ class StorageSettings(BaseModel):
         elif self.strategy == StorageStrategy.MINIO:
             if not self.minio:
                 raise ValueError("MinIO settings are required for MINIO strategy")
+        elif self.strategy == StorageStrategy.LIBRECHAT:
+            if not self.librechat:
+                raise ValueError("LibreChat settings are required for LIBRECHAT strategy")
         return self
 
 
@@ -382,6 +420,7 @@ class Config(BaseModel):
         gcs_settings = None
         azure_settings = None
         minio_settings = None
+        librechat_settings = None
 
         if strategy == StorageStrategy.S3.value:
             s3_settings = S3Settings(
@@ -412,6 +451,11 @@ class Config(BaseModel):
                 verify_ssl=cls._parse_bool(os.environ.get("MINIO_VERIFY_SSL", "true")),
                 path_style=cls._parse_bool(os.environ.get("MINIO_PATH_STYLE", "true")),
             )
+        elif strategy == StorageStrategy.LIBRECHAT.value:
+            librechat_settings = LibreChatSettings(
+                service_url=os.environ.get("LIBRECHAT_SERVICE_URL", ""),
+                service_token=os.environ.get("LIBRECHAT_SERVICE_TOKEN", ""),
+            )
 
         storage_settings = StorageSettings(
             strategy=StorageStrategy(strategy),
@@ -420,6 +464,7 @@ class Config(BaseModel):
             gcs=gcs_settings,
             azure=azure_settings,
             minio=minio_settings,
+            librechat=librechat_settings,
         )
 
         # API key authentication (optional – empty/missing means no auth)

@@ -1,21 +1,22 @@
-from typing import Annotated, List, Optional, Literal
+from typing import Annotated, List, Optional, Literal, Union
 
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from pydantic import Field
-from xlsx_tools import markdown_to_excel
-from docx_tools import markdown_to_word
+from xlsx_tools import _markdown_to_excel_buffer
+from docx_tools import _markdown_to_word_buffer
 from docx_tools.dynamic_docx_tools import register_docx_template_tools_from_yaml
-from pptx_tools import create_presentation
-from email_tools import create_eml
+from pptx_tools import _create_presentation_buffer
+from email_tools import _create_eml_buffer
 from email_tools.dynamic_email_tools import register_email_template_tools_from_yaml
 from pathlib import Path
 from config import get_config
-from xml_tools import create_xml_file
+from xml_tools import _create_xml_buffer
 from middleware import ApiKeyAuthMiddleware
 from async_runner import run_blocking
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse
+from librechat_integration import extract_user_context_from_request, upload_and_format_response
 
 import logging
 mcp = FastMCP("MCP Office Documents")
@@ -149,16 +150,39 @@ async def create_excel_document(
     markdown_content: Annotated[str, Field(description="Markdown content containing tables, headers, and formulas. Use '## Sheet: Sheet Name' to create multiple worksheets. Formulas MUST start with '=' prefix (e.g. =SUM(A1:A5), =A1/B1*100). Use T1.B[0] for cross-table references and B[0] for current row references. Use SheetName!T1.B[0] for cross-sheet references (resolves to SheetName!B2 in Excel). ALWAYS use [0], [1], [2] notation, NEVER use absolute row numbers like B2, B3. Do NOT count table header as first row, first row has index [0]. Supports cell formatting: **bold**, *italic*. Supports column alignment via separator row: |:---|  left, |:---:| center, |---:| right. Dates are auto-detected and formatted (ISO, European, US formats). Supports HTML comment directives placed on a line directly above a table: '<!-- freeze -->' freezes the header row so it stays visible when scrolling; '<!-- types: text, currency:$, date, bool, number, percent -->' forces column data types per column (comma-separated, one per column; omit or leave blank for auto-detection). Type options: 'text' keeps value as-is (preserves leading zeros), 'currency:<symbol>' strips symbol and stores as number with currency format (symbols: $, €, £, ¥, Kč, zł, kr, CHF, R$, ₹), 'date' or 'date:<format>' parses date with optional Excel format, 'bool' maps true/false/yes/no to Excel boolean, 'number' or 'number:<format>' ensures numeric with optional format, 'percent' converts '50%' to 0.5 with percentage format. Multiple directives can be stacked above the same table.")],
     file_name: Annotated[Optional[str], Field(description="Custom filename for the output file (without extension). If not provided, a unique identifier will be used.", default=None)] = None,
     auto_filter: Annotated[bool, Field(description="If true, adds Excel auto-filter dropdowns to table headers, enabling sorting and filtering in Excel.", default=False)] = False,
-) -> str:
+    add_unique_prefix: Annotated[Optional[bool], Field(description="If true, adds 8-char UUID prefix to filename for uniqueness. If not set, defaults to True for traditional storage backends (LOCAL/S3/GCS/AZURE/MINIO) and False for LibreChat.", default=None)] = None,
+) -> Union[str, dict]:
     """
     Converts markdown to Excel with advanced formula support.
+
+    Returns:
+        For traditional upload strategies: URL string
+        For LIBRECHAT strategy: MCP file artifact dict
     """
 
     logger.info("Converting markdown to Excel document")
 
     try:
-        result = await run_blocking(markdown_to_excel, markdown_content, file_name=file_name, auto_filter=auto_filter)
-        logger.info("Excel document uploaded successfully")
+        # Generate document buffer
+        file_buffer = await run_blocking(
+            _markdown_to_excel_buffer,
+            markdown_content,
+            auto_filter=auto_filter,
+        )
+        
+        # Upload and format response (handles both LIBRECHAT and traditional backends)
+        user_context = extract_user_context_from_request()
+        result = await upload_and_format_response(
+            file_buffer,
+            "xlsx",
+            file_name,
+            user_context,
+            f"Excel spreadsheet '{file_name or 'spreadsheet'}' created successfully.",
+            add_unique_prefix=add_unique_prefix,
+        )
+        file_buffer.close()
+        
+        logger.info("Excel document created successfully")
         return result
     except Exception as e:
         logger.error(f"Error creating Excel document: {e}", exc_info=True)
@@ -218,17 +242,22 @@ async def create_word_document(
     footer_text: Annotated[Optional[str], Field(description="Text for document footer (bottom of every page). Use {page} for auto page number, {pages} for total pages.", default=None)] = None,
     include_toc: Annotated[Optional[bool], Field(description="If true, inserts a Table of Contents at the beginning of the document. The TOC updates automatically when opened in Word.", default=False)] = False,
     file_name: Annotated[Optional[str], Field(description="Custom filename for the output file (without extension). If not provided, a unique identifier will be used.", default=None)] = None,
-) -> str:
+    add_unique_prefix: Annotated[Optional[bool], Field(description="If true, adds 8-char UUID prefix to filename for uniqueness. If not set, defaults to True for traditional storage backends (LOCAL/S3/GCS/AZURE/MINIO) and False for LibreChat.", default=None)] = None,
+) -> Union[str, dict]:
     """
     Converts markdown to professionally formatted Word document.
 
+    Returns:
+        For traditional upload strategies: URL string
+        For LIBRECHAT strategy: MCP file artifact dict
     """
 
     logger.info("Converting markdown to Word document")
 
     try:
-        result = await run_blocking(
-            markdown_to_word,
+        # Generate document buffer
+        file_buffer = await run_blocking(
+            _markdown_to_word_buffer,
             markdown_content,
             title=title,
             author=author,
@@ -236,9 +265,21 @@ async def create_word_document(
             header_text=header_text,
             footer_text=footer_text,
             include_toc=include_toc or False,
-            file_name=file_name,
         )
-        logger.info("Word document uploaded successfully")
+        
+        # Upload and format response (handles both LIBRECHAT and traditional backends)
+        user_context = extract_user_context_from_request()
+        result = await upload_and_format_response(
+            file_buffer,
+            "docx",
+            file_name,
+            user_context,
+            f"Word document '{title or file_name or 'document'}' created successfully.",
+            add_unique_prefix=add_unique_prefix,
+        )
+        file_buffer.close()
+        
+        logger.info("Word document created successfully")
         return result
     except Exception as e:
         logger.error(f"Error creating Word document: {e}", exc_info=True)
@@ -275,20 +316,40 @@ Inline markdown formatting is supported in text fields (slide_text, quote_text, 
     footer_text: Annotated[Optional[str], Field(description="Footer text displayed on every slide (e.g., company name, confidentiality notice).", default=None)] = None,
     show_slide_numbers: Annotated[bool, Field(description="Show slide numbers on every slide.", default=False)] = False,
     file_name: Annotated[Optional[str], Field(description="Custom filename for the output file (without extension). If not provided, a unique identifier will be used.", default=None)] = None,
-) -> str:
-    """Creates PowerPoint presentations with structured slide models and professional templates."""
+    add_unique_prefix: Annotated[Optional[bool], Field(description="If true, adds 8-char UUID prefix to filename for uniqueness. If not set, defaults to True for traditional storage backends (LOCAL/S3/GCS/AZURE/MINIO) and False for LibreChat.", default=None)] = None,
+) -> Union[str, dict]:
+    """Creates PowerPoint presentations with structured slide models and professional templates.
+
+    Returns:
+        For traditional upload strategies: URL string
+        For LIBRECHAT strategy: MCP file artifact dict
+    """
 
     logger.info(f"Creating PowerPoint presentation with {len(slides)} slides in {format} format")
 
     try:
-        result = await run_blocking(
-            create_presentation, slides, format,
-            file_name=file_name,
+        # Generate presentation buffer
+        file_buffer = await run_blocking(
+            _create_presentation_buffer,
+            slides, format,
             author=author,
             footer_text=footer_text,
             show_slide_numbers=show_slide_numbers,
         )
-        logger.info(f"PowerPoint presentation created: {result}")
+        
+        # Upload and format response (handles both LIBRECHAT and traditional backends)
+        user_context = extract_user_context_from_request()
+        result = await upload_and_format_response(
+            file_buffer,
+            "pptx",
+            file_name,
+            user_context,
+            f"PowerPoint presentation '{file_name or 'presentation'}' with {len(slides)} slides created successfully.",
+            add_unique_prefix=add_unique_prefix,
+        )
+        file_buffer.close()
+        
+        logger.info("PowerPoint presentation created successfully")
         return result
     except Exception as e:
         logger.error(f"Error creating PowerPoint presentation: {e}", exc_info=True)
@@ -309,16 +370,22 @@ async def create_email_draft(
     priority: Annotated[str, Field(description="Email priority: 'low', 'normal', or 'high'", default="normal")],
     language: Annotated[str, Field(description="Language code for proofreading in Outlook (e.g., 'cs-CZ' for Czech, 'en-US' for English, 'de-DE' for German, 'sk-SK' for Slovak)", default="cs-CZ")],
     file_name: Annotated[Optional[str], Field(description="Custom filename for the output file (without extension). If not provided, a unique identifier will be used.", default=None)] = None,
-) -> str:
+    add_unique_prefix: Annotated[Optional[bool], Field(description="If true, adds 8-char UUID prefix to filename for uniqueness. If not set, defaults to True for traditional storage backends (LOCAL/S3/GCS/AZURE/MINIO) and False for LibreChat.", default=None)] = None,
+) -> Union[str, dict]:
     """
     Creates professional email drafts in EML format with preset styling and language settings.
+
+    Returns:
+        For traditional upload strategies: URL string
+        For LIBRECHAT strategy: MCP file artifact dict
     """
 
     logger.info(f"Creating email draft with subject: {subject}")
 
     try:
-        result = await run_blocking(
-            create_eml,
+        # Generate email buffer
+        file_buffer = await run_blocking(
+            _create_eml_buffer,
             to=to,
             cc=cc,
             bcc=bcc,
@@ -326,9 +393,21 @@ async def create_email_draft(
             content=content,
             priority=priority,
             language=language,
-            file_name=file_name,
         )
-        logger.info(f"Email draft created: {result}")
+        
+        # Upload and format response (handles both LIBRECHAT and traditional backends)
+        user_context = extract_user_context_from_request()
+        result = await upload_and_format_response(
+            file_buffer,
+            "eml",
+            file_name,
+            user_context,
+            f"Email draft '{subject}' created successfully.",
+            add_unique_prefix=add_unique_prefix,
+        )
+        file_buffer.close()
+        
+        logger.info("Email draft created successfully")
         return result
     except Exception as e:
         logger.error(f"Error creating email draft: {e}", exc_info=True)
@@ -343,17 +422,39 @@ async def create_email_draft(
 async def create_xml_document(
     xml_content: Annotated[str, Field(description="Complete, well-formed XML content. Must be valid XML with proper opening and closing tags.")],
     file_name: Annotated[Optional[str], Field(description="Custom filename for the output file (without extension). If not provided, a unique identifier will be used.", default=None)] = None,
-) -> str:
+    add_unique_prefix: Annotated[Optional[bool], Field(description="If true, adds 8-char UUID prefix to filename for uniqueness. If not set, defaults to True for traditional storage backends (LOCAL/S3/GCS/AZURE/MINIO) and False for LibreChat.", default=None)] = None,
+) -> Union[str, dict]:
     """
     Creates an XML file from provided XML content.
     Validates that the XML is well-formed before saving.
+
+    Returns:
+        For traditional upload strategies: URL string
+        For LIBRECHAT strategy: MCP file artifact dict
     """
 
     logger.info("Creating XML file")
 
     try:
-        result = await run_blocking(create_xml_file, xml_content, file_name=file_name)
-        logger.info("XML file created successfully.")
+        # Generate XML buffer
+        file_buffer = await run_blocking(
+            _create_xml_buffer,
+            xml_content,
+        )
+        
+        # Upload and format response (handles both LIBRECHAT and traditional backends)
+        user_context = extract_user_context_from_request()
+        result = await upload_and_format_response(
+            file_buffer,
+            "xml",
+            file_name,
+            user_context,
+            f"XML file '{file_name or 'document'}' created successfully.",
+            add_unique_prefix=add_unique_prefix,
+        )
+        file_buffer.close()
+        
+        logger.info("XML file created successfully")
         return result
     except Exception as e:
         logger.error(f"Error creating XML file: {e}", exc_info=True)

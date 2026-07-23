@@ -47,6 +47,8 @@ Just ask your AI to _"create a sales presentation"_ or _"draft a welcome email"_
 
 All tools accept an optional **`file_name`** parameter. When provided, the output file will use that name (without extension) instead of a randomly generated identifier.
 
+All tools also accept an optional **`add_unique_prefix`** parameter (default `false`). When `false`, filenames are clean without UUID prefix (e.g., `My_Report.docx`). When `true`, adds an 8-character UUID prefix for server-side uniqueness (e.g., `ff8ae81d_My_Report.docx`). In most cases, the default is sufficient because LibreChat adds its own UUID prefix during file storage.
+
 **Bonus — Dynamic Templates:**
 
 - 📧 **Reusable Email Templates** — Define parameterized email layouts in YAML. Each becomes its own tool with typed arguments (e.g., `first_name`, `promo_code`).
@@ -195,6 +197,44 @@ Set `UPLOAD_STRATEGY=MINIO` and provide:
 | `MINIO_PATH_STYLE` | Use path-style URLs (recommended for MinIO) | `true` |
 
 Make sure the bucket exists and your credentials have `PutObject`/`GetObject` permissions.
+
+</details>
+
+<details>
+<summary><strong>💬 LibreChat Integration (Experimental)</strong></summary>
+
+> ⚠️ **Note:** This feature is **not yet implemented in the official LibreChat repository**. It requires a custom LibreChat build with MCP file artifact support. A test version is available at:
+> 
+> 👉 https://github.com/geodanchev/LibreChat/tree/feature/mcp-ms-office-docs-integration
+
+Set `UPLOAD_STRATEGY=LIBRECHAT` to enable seamless document generation within LibreChat conversations. Documents are uploaded to LibreChat's service endpoint and returned as MCP file artifacts that appear as attachments in the chat UI.
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `LIBRECHAT_SERVICE_URL` | Full URL to LibreChat's service files endpoint | ✅ |
+| `LIBRECHAT_SERVICE_TOKEN` | Service token for authentication (must match `MCP_SERVICE_TOKEN` in LibreChat) | ✅ |
+
+**Typical URLs:**
+- Inside Docker network: `http://api:3080/api/service/files`
+- Local development: `http://localhost:3080/api/service/files`
+
+**Generate a service token:**
+```bash
+openssl rand -hex 32
+```
+
+**LibreChat `librechat.yaml` configuration:**
+```yaml
+mcpServers:
+  Office-documents:
+    type: streamable-http
+    url: http://mcp-office-docs:8958/mcp
+    headers:
+      X-User-Id: "{{LIBRECHAT_USER_ID}}"
+      X-User-Email: "{{LIBRECHAT_USER_EMAIL}}"
+```
+
+The `X-User-Id` and `X-User-Email` headers are automatically populated by LibreChat and used to associate uploaded files with the correct user.
 
 </details>
 

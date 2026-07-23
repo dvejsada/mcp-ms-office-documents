@@ -26,16 +26,24 @@ def sanitize_filename(name: str) -> str:
     return name or "document"
 
 
-def generate_named_object_name(filename: str, suffix: str) -> str:
-    """Generate an object name using a human-readable filename with a short UUID prefix.
-
+def generate_named_object_name(
+    filename: str, 
+    suffix: str, 
+    add_unique_prefix: bool = False
+) -> str:
+    """Generate an object name using a human-readable filename.
+    
     :param filename: Human-readable filename (will be sanitized)
     :param suffix: File extension (e.g., 'pptx', 'docx', 'xlsx', 'eml')
-    :return: Object name like 'a1b2c3d4_My_Report.docx'
+    :param add_unique_prefix: If True, adds 8-char UUID prefix for uniqueness.
+        Default False - LibreChat handles uniqueness with its own UUID prefix.
+    :return: Object name like 'My_Report.docx' or 'a1b2c3d4_My_Report.docx'
     """
     safe_name = sanitize_filename(filename)
-    short_id = uuid.uuid4().hex[:8]
-    return f"{short_id}_{safe_name}.{suffix}"
+    if add_unique_prefix:
+        short_id = uuid.uuid4().hex[:8]
+        return f"{short_id}_{safe_name}.{suffix}"
+    return f"{safe_name}.{suffix}"
 
 
 def get_content_type(file_name: str) -> str:

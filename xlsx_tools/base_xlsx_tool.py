@@ -146,3 +146,94 @@ def markdown_to_excel(markdown_content: str, file_name: str | None = None, auto_
         raise RuntimeError(f"Error saving/uploading Excel workbook: {e}") from e
     finally:
         file_object.close()
+
+
+def _markdown_to_excel_buffer(markdown_content: str, auto_filter: bool = False) -> io.BytesIO:
+    """Convert Markdown to Excel workbook and return as BytesIO buffer.
+
+    This function is useful when the caller needs to handle upload separately,
+    such as for LibreChat file artifact uploads.
+
+    Args:
+        markdown_content: Markdown string with tables.
+        auto_filter: If True, apply Excel auto-filter to each table.
+
+    Returns:
+        BytesIO buffer containing the Excel workbook (position at start)
+
+    Raises:
+        RuntimeError: If the markdown contains no tables or conversion fails.
+    """
+    logger.info("Starting _markdown_to_excel_buffer conversion")
+
+    # ── Input validation ──
+    if not markdown_content or not markdown_content.strip():
+        raise RuntimeError("Cannot create Excel workbook: markdown content is empty")
+
+    # Split content into lines and parse into events (single shared state machine)
+    lines: list[str] = markdown_content.split('\n')
+    events = walk_markdown_lines(lines)
+
+    # Build table position map from events (used for cross-sheet formula resolution)
+    all_sheet_table_positions = collect_table_positions(events)
+
+    # ── Build the actual workbook from events ──
+    wb = Workbook()
+    ws = wb.active
+    ws.title = _sanitize_sheet_name(DEFAULT_SHEET_NAME)
+
+    # Per-sheet state for formula resolution
+    table_positions: dict[str, int] = {}
+
+    # Counters for summary
+    tables_count = 0
+
+    try:
+        for event in events:
+            if isinstance(event, SheetEvent):
+                if event.is_rename:
+                    try:
+                        ws.title = event.sheet_name
+                    except (SheetTitleException, ValueError):
+                        pass
+                else:
+                    try:
+                        ws = wb.create_sheet(title=event.sheet_name)
+                    except (SheetTitleException, ValueError):
+                        ws = wb.create_sheet()
+                    table_positions = {}
+
+            elif isinstance(event, HeaderEvent):
+                cell = ws.cell(row=event.row, column=1)
+                cell.value = event.text
+                cell.font = HEADER_FONTS.get(event.level, HEADER_FONT_DEFAULT)
+
+            elif isinstance(event, TableEvent):
+                table_positions[event.table_key] = event.start_row
+                add_table_to_sheet(
+                    event.table_data, ws, event.start_row, table_positions,
+                    all_sheet_table_positions=all_sheet_table_positions,
+                    auto_filter=auto_filter,
+                    table_index=tables_count,
+                    directives=event.directives,
+                )
+                if 'freeze' in event.directives:
+                    ws.freeze_panes = f"A{event.start_row + 1}"
+                tables_count += 1
+
+    except Exception as e:
+        raise RuntimeError(f"Error generating Excel workbook: {e}") from e
+
+    if tables_count == 0:
+        raise RuntimeError(
+            "Cannot create Excel workbook: no valid markdown tables found in the input."
+        )
+
+    # Save workbook to BytesIO
+    file_object = io.BytesIO()
+    try:
+        wb.save(file_object)
+        file_object.seek(0)
+        return file_object
+    except Exception as e:
+        raise RuntimeError(f"Error saving Excel workbook: {e}") from e

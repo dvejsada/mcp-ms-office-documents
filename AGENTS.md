@@ -36,6 +36,18 @@ main.py                  ← Registers all MCP tools on a single FastMCP instanc
 - **Error handling in tools**: raise `fastmcp.exceptions.ToolError` for user-facing errors; use `RuntimeError` in upload/backend layers.
 - **Logging**: use `logging.getLogger(__name__)` everywhere. Level controlled by `DEBUG` env var only.
 
+## Filename Generation
+
+**UUID prefix control** (`add_unique_prefix` parameter):
+- All MCP tools accept an optional `add_unique_prefix: bool` parameter.
+- The **default behavior depends on the storage strategy**:
+  - **Traditional backends** (LOCAL, S3, GCS, AZURE, MINIO): defaults to `True` for collision safety in shared storage.
+  - **LIBRECHAT**: defaults to `False` because LibreChat adds its own UUID prefix during file storage (`3deca384-6c9a-492a-ae2b-08ce22122cba__My_Report.docx`).
+- When `True`: adds an 8-character UUID prefix for server-side uniqueness (e.g., `ff8ae81d_My_Report.docx`).
+- When `False`: filenames are clean without UUID prefix (e.g., `My_Report.docx`).
+- **Implementation**: The parameter flows through `upload_file_async()` → `upload_file()` → `generate_named_object_name()` in `upload_tools/`. When the parameter is `None` (not explicitly set), the default is resolved based on the storage strategy.
+- **Dynamic tools**: YAML-defined tools can include `add_unique_prefix` in their payload; the parameter is extracted with `.get("add_unique_prefix", False)` in `dynamic_docx_tools.py` and `dynamic_email_tools.py`. For dynamic tools using traditional backends, consider passing `True` explicitly if filename uniqueness is required.
+
 ## Adding a New Document Tool
 
 1. Create `<type>_tools/` package with `__init__.py`, `base_<type>_tool.py`, and optional `helpers.py`.

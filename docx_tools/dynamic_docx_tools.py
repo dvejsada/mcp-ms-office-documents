@@ -752,7 +752,12 @@ def _register_single_template(mcp: FastMCP, spec: Dict[str, Any],
                     doc.save(buffer)
                     buffer.seek(0)
 
-                    result = upload_file(buffer, "docx", filename=payload.get("file_name") or _name)
+                    result = upload_file(
+                        buffer,
+                        "docx",
+                        filename=payload.get("file_name") or _name,
+                        add_unique_prefix=payload.get("add_unique_prefix", False),
+                    )
                 finally:
                     buffer.close()
 

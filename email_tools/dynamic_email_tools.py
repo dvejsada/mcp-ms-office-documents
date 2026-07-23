@@ -217,7 +217,12 @@ def _register_single_email_template(mcp: FastMCP, spec: Dict[str, Any]) -> bool:
                 try:
                     buffer.write(msg.as_bytes())
                     buffer.seek(0)
-                    result = upload_file(buffer, "eml", filename=safe_payload.get("file_name") or safe_payload.get("subject") or _name)
+                    result = upload_file(
+                        buffer,
+                        "eml",
+                        filename=safe_payload.get("file_name") or safe_payload.get("subject") or _name,
+                        add_unique_prefix=safe_payload.get("add_unique_prefix", False),
+                    )
                     metrics.record_call("email", _name)
                     return result
                 except Exception as e:  # pragma: no cover

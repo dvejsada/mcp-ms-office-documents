@@ -68,10 +68,17 @@ def _markdown_to_doc(markdown_content, title=None, author=None, subject=None,
     return doc
 
 
-def markdown_to_word(markdown_content, title=None, author=None, subject=None,
-                     header_text=None, footer_text=None, include_toc=False, file_name=None,
-                     style_map=None):
-    """Convert Markdown to Word document, save to memory and upload."""
+def _markdown_to_word_buffer(markdown_content, title=None, author=None, subject=None,
+                             header_text=None, footer_text=None, include_toc=False,
+                             style_map=None) -> io.BytesIO:
+    """Convert Markdown to Word document and return as BytesIO buffer.
+
+    This function is useful when the caller needs to handle upload separately,
+    such as for LibreChat file artifact uploads.
+
+    Returns:
+        BytesIO buffer containing the Word document (position at start)
+    """
     doc = _markdown_to_doc(
         markdown_content,
         title=title,
@@ -83,18 +90,39 @@ def markdown_to_word(markdown_content, title=None, author=None, subject=None,
         style_map=style_map,
     )
 
-    # Save the document to BytesIO and upload
     try:
         logger.info("Saving Word document to memory buffer")
         file_object = io.BytesIO()
         doc.save(file_object)
         file_object.seek(0)
+        return file_object
+    except Exception as e:
+        logger.error(f"Error saving Word document to buffer: {e}", exc_info=True)
+        raise RuntimeError(f"Error saving Word document: {e}") from e
 
+
+def markdown_to_word(markdown_content, title=None, author=None, subject=None,
+                     header_text=None, footer_text=None, include_toc=False, file_name=None,
+                     style_map=None):
+    """Convert Markdown to Word document, save to memory and upload."""
+    file_object = _markdown_to_word_buffer(
+        markdown_content,
+        title=title,
+        author=author,
+        subject=subject,
+        header_text=header_text,
+        footer_text=footer_text,
+        include_toc=include_toc,
+        style_map=style_map,
+    )
+
+    # Upload the document
+    try:
         result = upload_file(file_object, "docx", filename=file_name)
         file_object.close()
 
         logger.info("Word document uploaded successfully")
         return result
     except Exception as e:
-        logger.error(f"Error saving/uploading Word document: {e}", exc_info=True)
-        raise RuntimeError(f"Error saving/uploading Word document: {e}") from e
+        logger.error(f"Error uploading Word document: {e}", exc_info=True)
+        raise RuntimeError(f"Error uploading Word document: {e}") from e
