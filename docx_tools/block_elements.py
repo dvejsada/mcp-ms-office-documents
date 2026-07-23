@@ -16,9 +16,11 @@ from .patterns import (
 from .inline_formatting import parse_inline_formatting
 from .patterns import _BR_RE
 from .numbering import (
-    resolve_ordered_abstract_num_id,
+    resolve_ordered_numbering,
     new_restarted_num,
     apply_numbering,
+    style_indent_attrs,
+    apply_style_indent,
 )
 from .style_map import apply_style
 
@@ -180,7 +182,11 @@ def process_list_items(lines, start_idx, doc, is_ordered=False, level=0,
     Ordered-list numbering restarts only when the explicit number ``1`` reappears
     at a level — NOT on any backward jump. ``1, 2, 1`` restarts; ``3, 4, 3`` does
     not (Word renders ``3, 4, 5``). A list starting at *N* honours that as the
-    first value via ``startOverride``.
+    first value via ``startOverride``. Restart instances are resolved from the
+    paragraph style applied at each level (so custom-mapped or directive-styled
+    lists keep their style's numeral format and indents), and any ``w:ind`` the
+    style defines is re-asserted as direct formatting so the numbering level's
+    indents don't override it (see :mod:`docx_tools.numbering`).
     Returns:
         Tuple of (next_line_index, list_of_elements | None).
     """
@@ -198,11 +204,17 @@ def process_list_items(lines, start_idx, doc, is_ordered=False, level=0,
     )
     # Ordered-list numbering restart state (see docx_tools/numbering.py). Each logical
     # list gets its own <w:num> instance so it counts independently; a new instance is
-    # started for the first item and whenever "1." reappears at this level.
+    # started for the first item and whenever "1." reappears at this level. The
+    # numbering definition (and the ilvl within it) is resolved from the paragraph
+    # style applied at this level, so custom-mapped or directive-styled lists keep
+    # their style's numeral format and indents.
     abstract_num_id = None
     numbering_root = None
+    resolved_ilvl = level
     num_resolved = False
     current_num_id = None
+    style_ind_attrs = None
+    style_ind_resolved = False
     items_emitted = 0
     last_item_number = None  # last top-level ordered number, to extend ordered_run
     while i < n:
@@ -230,14 +242,22 @@ def process_list_items(lines, start_idx, doc, is_ordered=False, level=0,
         if is_ordered:
             if current_num_id is None or (item_number == 1 and items_emitted > 0):
                 if not num_resolved:
-                    abstract_num_id, numbering_root = resolve_ordered_abstract_num_id(doc)
+                    abstract_num_id, resolved_ilvl, numbering_root = (
+                        resolve_ordered_numbering(doc, level=level, style_name=style))
                     num_resolved = True
                 if abstract_num_id is not None:
                     current_num_id = new_restarted_num(
-                        numbering_root, abstract_num_id, level, start=item_number
+                        numbering_root, abstract_num_id, resolved_ilvl, start=item_number
                     )
             if current_num_id is not None:
-                apply_numbering(paragraph, current_num_id, level)
+                apply_numbering(paragraph, current_num_id, resolved_ilvl)
+                # The direct numPr would let the numbering level's indents override
+                # the style's own; re-assert the style's indents (resolved once from
+                # the style actually applied — it may have fallen back to Normal).
+                if not style_ind_resolved:
+                    style_ind_attrs = style_indent_attrs(paragraph.style)
+                    style_ind_resolved = True
+                apply_style_indent(paragraph, style_ind_attrs)
             last_item_number = item_number
         parse_inline_formatting(item_text, paragraph)
         items_emitted += 1

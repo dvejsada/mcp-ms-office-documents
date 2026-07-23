@@ -3,6 +3,7 @@ This module contains process_markdown_content and process_markdown_block which
 orchestrate all block-level and inline parsing into a python-docx Document.
 """
 import logging
+from dataclasses import replace
 from docx.oxml.ns import qn
 from docx.text.paragraph import Paragraph
 from .patterns import (
@@ -82,11 +83,12 @@ def process_markdown_content(doc, content, return_elements=False,
     i = 0
     all_elements = []
     # Running ordered-list count: the number that would continue the most recent
-    # top-level ordered list. Preserved across headings and blank lines so a list
-    # can resume after a section heading; reset by any other block content. Lets
-    # _continues_ordered_run() accept e.g. "3." after a heading even when it is
-    # blank-separated (and so not locally genuine). A mutable cell so
-    # process_list_items can update it through process_markdown_block.
+    # top-level ordered list. Preserved across headings, blank lines, block
+    # quotes and comment-directive blocks so a list can resume after a section
+    # heading or an interposed quote/styled note; reset by any other block
+    # content. Lets _continues_ordered_run() accept e.g. "3." after a heading
+    # even when it is blank-separated (and so not locally genuine). A mutable
+    # cell so process_list_items can update it through process_markdown_block.
     ordered_run = {'next': None}
     while i < n:
         line = lines[i]
@@ -105,7 +107,10 @@ def process_markdown_content(doc, content, return_elements=False,
                         doc._body._body.remove(p._p)
             continue
         # --- Soft line breaks (trailing two spaces) ---
-        if line.endswith('  '):
+        # A complete <!-- --> comment line is exempt: trailing spaces after the
+        # closing marker must not turn a directive (or a comment to be skipped)
+        # into soft-break prose that renders the comment text literally.
+        if line.endswith('  ') and not _is_complete_comment(line):
             paragraph_lines = []
             while i < n:
                 current_line = lines[i]
@@ -124,7 +129,8 @@ def process_markdown_content(doc, content, return_elements=False,
                 # A heading does not break ordered-list continuation.
             elif first_line.startswith('>'):
                 elem = _add_quote(doc, full_text[1:].strip(), style_map)._p
-                ordered_run['next'] = None
+                # A quote does not break ordered-list continuation (like a
+                # heading, it deliberately interrupts a numbered run).
             else:
                 para = doc.add_paragraph()
                 parse_inline_formatting(full_text, para)
@@ -135,12 +141,22 @@ def process_markdown_content(doc, content, return_elements=False,
                 doc._body._body.remove(elem)
             continue
         # --- All other block elements: delegate to block processor ---
-        # Continuation survives only headings and (above) blank lines; any other
-        # block content breaks the run. A numbered line is left alone so a list
-        # that actually renders can update the count via process_list_items.
+        # Continuation survives headings, blank lines (above), block quotes and
+        # complete <!-- --> comment lines. A style directive attaches to the
+        # block it styles, and that WHOLE directive-styled block (whatever its
+        # type — the dispatcher consumes directive + target together) is treated
+        # as a deliberate interruption of a numbered run, exactly like a
+        # heading: e.g. an evidence note or citation between numbered
+        # paragraphs of a legal filing. Any other block content breaks the run.
+        # A numbered line is left alone so a list that actually renders can
+        # update the count via process_list_items. An unclosed "<!--" is not a
+        # comment (it renders as literal prose), so it resets like any prose.
         stripped = line.strip()
+        is_comment_line = _is_complete_comment(line)
         if (HEADING_PATTERN.match(stripped) is None
-                and ORDERED_LIST_PATTERN.match(stripped) is None):
+                and ORDERED_LIST_PATTERN.match(stripped) is None
+                and not stripped.startswith('>')
+                and not is_comment_line):
             ordered_run['next'] = None
         i, block_elems = process_markdown_block(doc, lines, i,
                                                 return_element=return_elements,
@@ -161,6 +177,26 @@ def _add_heading(doc, level, content, style_map):
     heading = add_mapped_heading(doc, min(level, 6), style_map)
     parse_inline_formatting(content, heading)
     return heading
+
+
+def _is_complete_comment(line):
+    """True if *line* (ignoring surrounding whitespace) is a whole ``<!-- -->``."""
+    stripped = line.strip()
+    return stripped.startswith('<!--') and stripped.endswith('-->')
+
+
+def _has_explicit_style(element):
+    """True if *element* is a paragraph carrying an explicit ``w:pStyle``.
+
+    Used by the style-directive branch to spot list items that were already
+    styled through the overridden style map. Note python-docx drops ``w:pStyle``
+    when a style application falls back to the document default ("Normal"), so
+    such paragraphs are (harmlessly) re-styled by the caller.
+    """
+    if element.tag != qn('w:p'):
+        return False
+    ppr = element.find(qn('w:pPr'))
+    return ppr is not None and ppr.find(qn('w:pStyle')) is not None
 
 
 def _add_quote(doc, content, style_map):
@@ -366,16 +402,42 @@ def process_markdown_block(doc, lines, start_idx, return_element=True,
             # inserted before the trailing <w:sectPr>, so positional slicing would be
             # unreliable.
             existing = None if return_element else set(body)
+            # A style directive targeting a LIST is applied through the style map
+            # (top level only) rather than stamped onto every produced paragraph
+            # afterwards: nested items keep their own mapped level styles instead
+            # of being flattened, and ordered-list numbering resolves from the
+            # directive style itself, keeping its numeral format and indents.
+            style_name = collected.get('style')
+            target = lines[idx].strip()
+            target_is_ordered = bool(ORDERED_LIST_PATTERN.match(target))
+            styles_via_map = bool(style_name) and (
+                target_is_ordered or bool(UNORDERED_LIST_PATTERN.match(target)))
+            block_style_map = style_map
+            if styles_via_map:
+                if target_is_ordered:
+                    block_style_map = replace(
+                        style_map,
+                        list_number=(style_name,) + tuple(style_map.list_number[1:]))
+                else:
+                    block_style_map = replace(
+                        style_map,
+                        list_bullet=(style_name,) + tuple(style_map.list_bullet[1:]))
             new_idx, block_elems = process_markdown_block(
-                doc, lines, idx, return_element=return_element, style_map=style_map,
-                directives=collected, ordered_run=ordered_run,
+                doc, lines, idx, return_element=return_element,
+                style_map=block_style_map, directives=collected,
+                ordered_run=ordered_run,
             )
             # The 'style' directive applies the named style to whatever was produced.
-            style_name = collected.get('style')
             if style_name:
                 produced = (block_elems if return_element
                             else [el for el in body if el not in existing])
                 for el in produced:
+                    # A list item already styled via the overridden style map (or a
+                    # nested level's own mapped style) carries an explicit pStyle —
+                    # leave it alone. A numbered line that rendered as plain prose
+                    # (e.g. a standalone date) has none and still gets the style.
+                    if styles_via_map and _has_explicit_style(el):
+                        continue
                     apply_style_to_block_element(doc, el, style_name)
             if return_element:
                 elements.extend(block_elems)

@@ -18,7 +18,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from docx_tools.block_elements import process_list_items  # noqa: E402
-from docx_tools.numbering import resolve_ordered_abstract_num_id  # noqa: E402
+from docx_tools.numbering import resolve_ordered_numbering  # noqa: E402
 
 
 def _new_doc_with_default_styles():
@@ -139,8 +139,9 @@ def test_restart_survives_return_elements_roundtrip():
 def test_resolve_uses_list_number_style_abstract():
     """Restart instances reuse the template's ``List Number`` numbering format."""
     doc = _new_doc_with_default_styles()
-    abstract_id, numbering = resolve_ordered_abstract_num_id(doc)
+    abstract_id, ilvl, numbering = resolve_ordered_numbering(doc)
     assert abstract_id is not None
+    assert ilvl == 0
     # It should match what the List Number style points at.
     style_el = doc.styles["List Number"]._element
     style_num = style_el.xpath('.//w:numPr/w:numId/@w:val')[0]
@@ -151,7 +152,7 @@ def test_resolve_uses_list_number_style_abstract():
 def test_resolve_returns_str_abstract_id():
     """All resolver paths return a str abstract id (consistent type)."""
     doc = _new_doc_with_default_styles()
-    abstract_id, _ = resolve_ordered_abstract_num_id(doc)
+    abstract_id, _ilvl, _ = resolve_ordered_numbering(doc)
     assert isinstance(abstract_id, str)
 
 
