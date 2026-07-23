@@ -339,3 +339,110 @@ class TestToolHandlerIntegration:
             prefix = object_name.split("_")[0]
             assert len(prefix) == 8, f"Expected 8-char prefix, got: {prefix}"
             assert all(c in "0123456789abcdef" for c in prefix), f"Prefix not hex: {prefix}"
+
+
+class TestToolSignatureDefaults:
+    """Tests that verify the actual FastMCP tool handler signatures have correct defaults.
+    
+    These tests use AST parsing to inspect main.py source code and verify that the
+    add_unique_prefix parameter defaults to None (not False) in all tool handler
+    signatures. This catches regressions where someone changes the parameter default
+    from None back to False.
+    
+    Using AST parsing avoids importing main.py (which requires openpyxl, python-docx,
+    etc.) while still verifying the actual source code.
+    """
+
+    @staticmethod
+    def _get_function_param_default(source_code: str, func_name: str, param_name: str):
+        """Extract the default value of a parameter from a function definition using AST.
+        
+        Returns:
+            The default value as a Python object, or a special marker if no default.
+        """
+        import ast
+        
+        tree = ast.parse(source_code)
+        
+        for node in ast.walk(tree):
+            if isinstance(node, ast.AsyncFunctionDef) and node.name == func_name:
+                # Get all arguments and their defaults
+                args = node.args
+                # args.args contains positional args, args.defaults contains their defaults
+                # defaults are right-aligned: if there are 5 args and 3 defaults,
+                # the first 2 args have no default
+                
+                # Also check kwonlyargs and kw_defaults
+                all_args = args.args + args.kwonlyargs
+                all_defaults = (
+                    [None] * (len(args.args) - len(args.defaults)) + 
+                    list(args.defaults) + 
+                    list(args.kw_defaults)
+                )
+                
+                for arg, default in zip(all_args, all_defaults):
+                    if arg.arg == param_name:
+                        if default is None:
+                            return "NO_DEFAULT"
+                        elif isinstance(default, ast.Constant):
+                            return default.value
+                        elif isinstance(default, ast.NameConstant):  # Python 3.7
+                            return default.value
+                        elif isinstance(default, ast.Name):
+                            return default.id  # e.g., 'None' as a name
+                        else:
+                            return f"COMPLEX_DEFAULT: {ast.dump(default)}"
+                
+                return "PARAM_NOT_FOUND"
+        
+        return "FUNCTION_NOT_FOUND"
+
+    @staticmethod
+    def _get_main_py_source():
+        """Read main.py source code."""
+        from pathlib import Path
+        main_py = Path(__file__).parent.parent / "main.py"
+        return main_py.read_text()
+
+    def test_create_excel_document_signature_defaults_to_none(self):
+        """Verify create_excel_document's add_unique_prefix defaults to None (not False).
+        
+        If the signature is changed to default=False, this test will fail.
+        """
+        source = self._get_main_py_source()
+        default = self._get_function_param_default(source, "create_excel_document", "add_unique_prefix")
+        
+        assert default is None, \
+            f"create_excel_document's add_unique_prefix should default to None, got: {default!r}"
+
+    def test_create_word_document_signature_defaults_to_none(self):
+        """Verify create_word_document's add_unique_prefix defaults to None (not False)."""
+        source = self._get_main_py_source()
+        default = self._get_function_param_default(source, "create_word_document", "add_unique_prefix")
+        
+        assert default is None, \
+            f"create_word_document's add_unique_prefix should default to None, got: {default!r}"
+
+    def test_create_powerpoint_presentation_signature_defaults_to_none(self):
+        """Verify create_powerpoint_presentation's add_unique_prefix defaults to None (not False)."""
+        source = self._get_main_py_source()
+        default = self._get_function_param_default(source, "create_powerpoint_presentation", "add_unique_prefix")
+        
+        assert default is None, \
+            f"create_powerpoint_presentation's add_unique_prefix should default to None, got: {default!r}"
+
+    def test_create_email_draft_signature_defaults_to_none(self):
+        """Verify create_email_draft's add_unique_prefix defaults to None (not False)."""
+        source = self._get_main_py_source()
+        default = self._get_function_param_default(source, "create_email_draft", "add_unique_prefix")
+        
+        assert default is None, \
+            f"create_email_draft's add_unique_prefix should default to None, got: {default!r}"
+
+    def test_create_xml_document_signature_defaults_to_none(self):
+        """Verify create_xml_document's add_unique_prefix defaults to None (not False)."""
+        source = self._get_main_py_source()
+        default = self._get_function_param_default(source, "create_xml_document", "add_unique_prefix")
+        
+        assert default is None, \
+            f"create_xml_document's add_unique_prefix should default to None, got: {default!r}"
