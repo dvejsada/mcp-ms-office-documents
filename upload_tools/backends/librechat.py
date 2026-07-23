@@ -144,7 +144,10 @@ async def upload_to_librechat(
                     "Verify LIBRECHAT_SERVICE_TOKEN matches MCP_SERVICE_TOKEN in LibreChat."
                 )
             elif response.status_code == 400:
-                error_detail = response.json().get("message", response.text)
+                try:
+                    error_detail = response.json().get("message", response.text)
+                except (ValueError, KeyError):
+                    error_detail = response.text
                 raise RuntimeError(f"LibreChat upload failed: {error_detail}")
 
             response.raise_for_status()
@@ -215,8 +218,8 @@ def format_file_artifact(file_info: dict, text_message: Optional[str] = None) ->
     Returns:
         Dict with result containing message and file info
     """
-    file_id = file_info["file_id"]
-    filename = file_info["filename"]
+    file_id = file_info.get("file_id", "unknown")
+    filename = file_info.get("filename", "document")
     filepath = file_info.get("filepath", f"/uploads/{file_id}")
     mime_type = file_info.get("type", "application/octet-stream")
     file_bytes = file_info.get("bytes", 0)

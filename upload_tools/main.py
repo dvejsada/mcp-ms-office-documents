@@ -47,7 +47,7 @@ def upload_file(
     suffix: str,
     filename: str | None = None,
     user_context: dict | None = None,
-    add_unique_prefix: bool = False,
+    add_unique_prefix: bool | None = None,
 ) -> Union[str, dict]:
     """Upload a file to configured backend and return appropriate response.
 
@@ -63,10 +63,15 @@ def upload_file(
         - user_email: Optional
         - conversation_id: Optional
     :param add_unique_prefix: If True, adds 8-char UUID prefix to filename for uniqueness.
-        Default False - LibreChat handles uniqueness with its own UUID prefix.
+        If None (default), uses True for traditional backends (to prevent collisions) and
+        False for LIBRECHAT (which handles uniqueness with its own UUID prefix).
     :return: Status message with download URL or save location (str for traditional backends)
     :raises RuntimeError: If upload fails or LIBRECHAT strategy used without async
     """
+    # Resolve default based on strategy: traditional backends default to True for collision safety,
+    # LIBRECHAT defaults to False since it handles uniqueness with its own UUID prefix.
+    if add_unique_prefix is None:
+        add_unique_prefix = UPLOAD_STRATEGY != StorageStrategy.LIBRECHAT
     # LIBRECHAT requires async - direct callers to upload_file_async
     if UPLOAD_STRATEGY == StorageStrategy.LIBRECHAT:
         raise RuntimeError(
@@ -114,7 +119,7 @@ async def upload_file_async(
     suffix: str,
     filename: str | None = None,
     user_context: dict | None = None,
-    add_unique_prefix: bool = False,
+    add_unique_prefix: bool | None = None,
 ) -> Union[str, dict]:
     """Async upload a file to configured backend.
 
@@ -130,11 +135,17 @@ async def upload_file_async(
         - user_email: Optional
         - conversation_id: Optional
     :param add_unique_prefix: If True, adds 8-char UUID prefix to filename for uniqueness.
-        Default False - LibreChat handles uniqueness with its own UUID prefix.
+        If None (default), uses True for traditional backends (to prevent collisions) and
+        False for LIBRECHAT (which handles uniqueness with its own UUID prefix).
     :return: URL string (traditional backends) or dict with file metadata (LIBRECHAT)
     :raises RuntimeError: If upload fails
     :raises ValueError: If LIBRECHAT used without user_context
     """
+    # Resolve default based on strategy: traditional backends default to True for collision safety,
+    # LIBRECHAT defaults to False since it handles uniqueness with its own UUID prefix.
+    if add_unique_prefix is None:
+        add_unique_prefix = UPLOAD_STRATEGY != StorageStrategy.LIBRECHAT
+
     # Generate object name
     try:
         if filename:

@@ -5,6 +5,7 @@ whether a UUID prefix is added to filenames during upload.
 """
 
 import pytest
+from unittest.mock import patch, MagicMock
 from upload_tools.utils import generate_named_object_name
 
 
@@ -121,3 +122,140 @@ def test_generate_named_object_name_long_filename():
     # With prefix (truncation happens after prefix)
     result_with_prefix = generate_named_object_name(long_name, "docx", add_unique_prefix=True)
     assert result_with_prefix.endswith(f"_{long_name[:100]}.docx")
+
+
+# =============================================================================
+# Tests for strategy-based default behavior
+# =============================================================================
+
+class TestStrategyBasedDefaults:
+    """Tests for add_unique_prefix strategy-based default behavior.
+    
+    These tests verify that the default value of add_unique_prefix depends on
+    the storage strategy:
+    - Traditional backends (LOCAL, S3, GCS, AZURE, MINIO): defaults to True
+    - LIBRECHAT: defaults to False (LibreChat handles its own UUID prefix)
+    """
+
+    def test_upload_file_defaults_to_true_for_local_strategy(self):
+        """For LOCAL strategy, add_unique_prefix should default to True."""
+        from config import StorageStrategy
+        
+        with patch('upload_tools.main.UPLOAD_STRATEGY', StorageStrategy.LOCAL), \
+             patch('upload_tools.main.upload_to_local_folder') as mock_upload:
+            mock_upload.return_value = "http://example.com/file.docx"
+            
+            from upload_tools.main import upload_file
+            from io import BytesIO
+            
+            file_obj = BytesIO(b"test content")
+            # Don't pass add_unique_prefix - should default to True for LOCAL
+            result = upload_file(file_obj, "docx", filename="test_file")
+            
+            # Check that the object_name passed to upload has a UUID prefix
+            call_args = mock_upload.call_args
+            object_name = call_args[0][1]  # Second positional arg is object_name
+            assert "_test_file.docx" in object_name, f"Expected UUID prefix, got: {object_name}"
+            # Verify the prefix is 8 hex characters
+            prefix = object_name.split("_")[0]
+            assert len(prefix) == 8, f"Expected 8-char prefix, got: {prefix}"
+            assert all(c in "0123456789abcdef" for c in prefix), f"Prefix not hex: {prefix}"
+
+    def test_upload_file_respects_explicit_false_for_local_strategy(self):
+        """For LOCAL strategy, explicit add_unique_prefix=False should be respected."""
+        from config import StorageStrategy
+        
+        with patch('upload_tools.main.UPLOAD_STRATEGY', StorageStrategy.LOCAL), \
+             patch('upload_tools.main.upload_to_local_folder') as mock_upload:
+            mock_upload.return_value = "http://example.com/file.docx"
+            
+            from upload_tools.main import upload_file
+            from io import BytesIO
+            
+            file_obj = BytesIO(b"test content")
+            # Explicitly pass add_unique_prefix=False
+            result = upload_file(file_obj, "docx", filename="test_file", add_unique_prefix=False)
+            
+            # Check that the object_name has NO UUID prefix
+            call_args = mock_upload.call_args
+            object_name = call_args[0][1]
+            assert object_name == "test_file.docx", f"Expected no prefix, got: {object_name}"
+
+    @pytest.mark.asyncio
+    async def test_upload_file_async_defaults_to_false_for_librechat_strategy(self):
+        """For LIBRECHAT strategy, add_unique_prefix should default to False."""
+        from config import StorageStrategy
+        
+        with patch('upload_tools.main.UPLOAD_STRATEGY', StorageStrategy.LIBRECHAT), \
+             patch('upload_tools.backends.librechat.upload_to_librechat') as mock_upload:
+            mock_upload.return_value = {"file_id": "123", "filename": "test_file.docx"}
+            
+            from upload_tools.main import upload_file_async
+            from io import BytesIO
+            
+            file_obj = BytesIO(b"test content")
+            user_context = {"user_id": "test_user"}
+            
+            # Don't pass add_unique_prefix - should default to False for LIBRECHAT
+            result = await upload_file_async(
+                file_obj, "docx", 
+                filename="test_file", 
+                user_context=user_context
+            )
+            
+            # Check that the object_name passed to upload has NO UUID prefix
+            call_args = mock_upload.call_args
+            object_name = call_args[0][1]  # Second positional arg is object_name
+            assert object_name == "test_file.docx", f"Expected no prefix for LIBRECHAT, got: {object_name}"
+
+    @pytest.mark.asyncio
+    async def test_upload_file_async_respects_explicit_true_for_librechat_strategy(self):
+        """For LIBRECHAT strategy, explicit add_unique_prefix=True should be respected."""
+        from config import StorageStrategy
+        
+        with patch('upload_tools.main.UPLOAD_STRATEGY', StorageStrategy.LIBRECHAT), \
+             patch('upload_tools.backends.librechat.upload_to_librechat') as mock_upload:
+            mock_upload.return_value = {"file_id": "123", "filename": "test_file.docx"}
+            
+            from upload_tools.main import upload_file_async
+            from io import BytesIO
+            
+            file_obj = BytesIO(b"test content")
+            user_context = {"user_id": "test_user"}
+            
+            # Explicitly pass add_unique_prefix=True
+            result = await upload_file_async(
+                file_obj, "docx", 
+                filename="test_file", 
+                user_context=user_context,
+                add_unique_prefix=True
+            )
+            
+            # Check that the object_name has a UUID prefix
+            call_args = mock_upload.call_args
+            object_name = call_args[0][1]
+            assert "_test_file.docx" in object_name, f"Expected UUID prefix, got: {object_name}"
+
+    @pytest.mark.asyncio
+    async def test_upload_file_async_defaults_to_true_for_s3_strategy(self):
+        """For S3 strategy, add_unique_prefix should default to True."""
+        from config import StorageStrategy
+        
+        with patch('upload_tools.main.UPLOAD_STRATEGY', StorageStrategy.S3), \
+             patch('upload_tools.main.upload_to_s3') as mock_upload, \
+             patch('upload_tools.main.cfg') as mock_cfg:
+            mock_upload.return_value = "https://s3.example.com/file.docx"
+            mock_cfg.storage.s3 = MagicMock()
+            
+            from upload_tools.main import upload_file_async
+            from io import BytesIO
+            
+            file_obj = BytesIO(b"test content")
+            
+            # Don't pass add_unique_prefix - should default to True for S3
+            result = await upload_file_async(file_obj, "docx", filename="test_file")
+            
+            # Check that the object_name has a UUID prefix
+            call_args = mock_upload.call_args
+            object_name = call_args[0][1]
+            assert "_test_file.docx" in object_name, f"Expected UUID prefix for S3, got: {object_name}"

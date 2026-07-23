@@ -24,6 +24,13 @@ def extract_user_context_from_request() -> dict:
 
     Uses FastMCP's get_http_request() to access the current request.
 
+    TRUST BOUNDARY NOTE:
+    These headers are trusted verbatim without validation. This is intentional
+    because LibreChat validates/authorizes the user before calling this MCP server.
+    The MCP endpoint's API key auth (ApiKeyAuthMiddleware) ensures only LibreChat
+    can reach this endpoint. LibreChat itself handles user authentication upstream,
+    so by the time requests reach here, the user identity has already been verified.
+
     Returns:
         Dict with user_id, user_email, and conversation_id (may be None)
     """
