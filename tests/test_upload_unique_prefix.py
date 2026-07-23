@@ -259,3 +259,83 @@ class TestStrategyBasedDefaults:
             call_args = mock_upload.call_args
             object_name = call_args[0][1]
             assert "_test_file.docx" in object_name, f"Expected UUID prefix for S3, got: {object_name}"
+
+
+class TestToolHandlerIntegration:
+    """Integration tests for add_unique_prefix through actual tool handlers.
+    
+    These tests verify that the strategy-based default resolution works
+    end-to-end through the MCP tool handlers, not just the upload functions.
+    """
+
+    @pytest.mark.asyncio
+    async def test_tool_handler_defaults_to_uuid_prefix_for_local_strategy(self):
+        """For LOCAL strategy, tool handlers should add UUID prefix by default.
+        
+        This tests the full flow: tool handler → upload_and_format_response → 
+        upload_file → generate_named_object_name, verifying that the None default
+        resolves to True for traditional backends.
+        """
+        from config import StorageStrategy
+        
+        # Mock at the upload_tools level to capture the actual call
+        with patch('librechat_integration.is_librechat_strategy', return_value=False), \
+             patch('upload_tools.main.UPLOAD_STRATEGY', StorageStrategy.LOCAL), \
+             patch('upload_tools.main.upload_to_local_folder') as mock_local_upload:
+            
+            mock_local_upload.return_value = "http://example.com/uuid_test_document.docx"
+            
+            from librechat_integration import upload_and_format_response
+            from io import BytesIO
+            
+            file_obj = BytesIO(b"test content")
+            user_context = {"user_id": None}  # Not LibreChat, user_id not required
+            
+            # Call upload_and_format_response with add_unique_prefix=None (simulating tool handler default)
+            result = await upload_and_format_response(
+                file_obj,
+                "docx",
+                "test_document",
+                user_context,
+                "Test document created.",
+                add_unique_prefix=None,  # This is what tool handlers pass by default now
+            )
+            
+            # Verify upload_to_local_folder was called with a UUID-prefixed filename
+            mock_local_upload.assert_called_once()
+            call_args = mock_local_upload.call_args
+            object_name = call_args[0][1]  # Second positional arg is object_name
+            
+            # The key assertion: filename should have UUID prefix because None resolved to True
+            assert "_test_document.docx" in object_name, \
+                f"Expected UUID prefix when add_unique_prefix=None for LOCAL strategy, got: {object_name}"
+            prefix = object_name.split("_")[0]
+            assert len(prefix) == 8, f"Expected 8-char UUID prefix, got: {prefix}"
+            assert all(c in "0123456789abcdef" for c in prefix), f"Prefix not hex: {prefix}"
+
+    @pytest.mark.asyncio
+    async def test_upload_file_resolves_none_to_true_for_local(self):
+        """Verify upload_file resolves None to True for LOCAL strategy."""
+        from config import StorageStrategy
+        
+        with patch('upload_tools.main.UPLOAD_STRATEGY', StorageStrategy.LOCAL), \
+             patch('upload_tools.main.upload_to_local_folder') as mock_upload:
+            mock_upload.return_value = "http://example.com/uuid_test_file.docx"
+            
+            from upload_tools.main import upload_file
+            from io import BytesIO
+            
+            file_obj = BytesIO(b"test content")
+            
+            # Call with add_unique_prefix=None (default for tool handlers)
+            result = upload_file(file_obj, "docx", filename="test_file", add_unique_prefix=None)
+            
+            # Check that the object_name passed to upload has a UUID prefix
+            call_args = mock_upload.call_args
+            object_name = call_args[0][1]  # Second positional arg is object_name
+            assert "_test_file.docx" in object_name, \
+                f"Expected UUID prefix when add_unique_prefix=None for LOCAL, got: {object_name}"
+            # Verify the prefix is 8 hex characters
+            prefix = object_name.split("_")[0]
+            assert len(prefix) == 8, f"Expected 8-char prefix, got: {prefix}"
+            assert all(c in "0123456789abcdef" for c in prefix), f"Prefix not hex: {prefix}"

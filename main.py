@@ -3,15 +3,15 @@ from typing import Annotated, List, Optional, Literal, Union
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from pydantic import Field
-from xlsx_tools import markdown_to_excel, _markdown_to_excel_buffer
-from docx_tools import markdown_to_word, _markdown_to_word_buffer
+from xlsx_tools import _markdown_to_excel_buffer
+from docx_tools import _markdown_to_word_buffer
 from docx_tools.dynamic_docx_tools import register_docx_template_tools_from_yaml
-from pptx_tools import create_presentation, _create_presentation_buffer
-from email_tools import create_eml, _create_eml_buffer
+from pptx_tools import _create_presentation_buffer
+from email_tools import _create_eml_buffer
 from email_tools.dynamic_email_tools import register_email_template_tools_from_yaml
 from pathlib import Path
-from config import get_config, StorageStrategy
-from xml_tools import create_xml_file, _create_xml_buffer
+from config import get_config
+from xml_tools import _create_xml_buffer
 from middleware import ApiKeyAuthMiddleware
 from async_runner import run_blocking
 from starlette.requests import Request
@@ -150,7 +150,7 @@ async def create_excel_document(
     markdown_content: Annotated[str, Field(description="Markdown content containing tables, headers, and formulas. Use '## Sheet: Sheet Name' to create multiple worksheets. Formulas MUST start with '=' prefix (e.g. =SUM(A1:A5), =A1/B1*100). Use T1.B[0] for cross-table references and B[0] for current row references. Use SheetName!T1.B[0] for cross-sheet references (resolves to SheetName!B2 in Excel). ALWAYS use [0], [1], [2] notation, NEVER use absolute row numbers like B2, B3. Do NOT count table header as first row, first row has index [0]. Supports cell formatting: **bold**, *italic*. Supports column alignment via separator row: |:---|  left, |:---:| center, |---:| right. Dates are auto-detected and formatted (ISO, European, US formats). Supports HTML comment directives placed on a line directly above a table: '<!-- freeze -->' freezes the header row so it stays visible when scrolling; '<!-- types: text, currency:$, date, bool, number, percent -->' forces column data types per column (comma-separated, one per column; omit or leave blank for auto-detection). Type options: 'text' keeps value as-is (preserves leading zeros), 'currency:<symbol>' strips symbol and stores as number with currency format (symbols: $, €, £, ¥, Kč, zł, kr, CHF, R$, ₹), 'date' or 'date:<format>' parses date with optional Excel format, 'bool' maps true/false/yes/no to Excel boolean, 'number' or 'number:<format>' ensures numeric with optional format, 'percent' converts '50%' to 0.5 with percentage format. Multiple directives can be stacked above the same table.")],
     file_name: Annotated[Optional[str], Field(description="Custom filename for the output file (without extension). If not provided, a unique identifier will be used.", default=None)] = None,
     auto_filter: Annotated[bool, Field(description="If true, adds Excel auto-filter dropdowns to table headers, enabling sorting and filtering in Excel.", default=False)] = False,
-    add_unique_prefix: Annotated[bool, Field(description="If true, adds 8-char UUID prefix to filename for uniqueness. Default false - LibreChat handles uniqueness with its own UUID prefix.", default=False)] = False,
+    add_unique_prefix: Annotated[Optional[bool], Field(description="If true, adds 8-char UUID prefix to filename for uniqueness. If not set, defaults to True for traditional storage backends (LOCAL/S3/GCS/AZURE/MINIO) and False for LibreChat.", default=None)] = None,
 ) -> Union[str, dict]:
     """
     Converts markdown to Excel with advanced formula support.
@@ -242,7 +242,7 @@ async def create_word_document(
     footer_text: Annotated[Optional[str], Field(description="Text for document footer (bottom of every page). Use {page} for auto page number, {pages} for total pages.", default=None)] = None,
     include_toc: Annotated[Optional[bool], Field(description="If true, inserts a Table of Contents at the beginning of the document. The TOC updates automatically when opened in Word.", default=False)] = False,
     file_name: Annotated[Optional[str], Field(description="Custom filename for the output file (without extension). If not provided, a unique identifier will be used.", default=None)] = None,
-    add_unique_prefix: Annotated[bool, Field(description="If true, adds 8-char UUID prefix to filename for uniqueness. Default false - LibreChat handles uniqueness with its own UUID prefix.", default=False)] = False,
+    add_unique_prefix: Annotated[Optional[bool], Field(description="If true, adds 8-char UUID prefix to filename for uniqueness. If not set, defaults to True for traditional storage backends (LOCAL/S3/GCS/AZURE/MINIO) and False for LibreChat.", default=None)] = None,
 ) -> Union[str, dict]:
     """
     Converts markdown to professionally formatted Word document.
@@ -316,7 +316,7 @@ Inline markdown formatting is supported in text fields (slide_text, quote_text, 
     footer_text: Annotated[Optional[str], Field(description="Footer text displayed on every slide (e.g., company name, confidentiality notice).", default=None)] = None,
     show_slide_numbers: Annotated[bool, Field(description="Show slide numbers on every slide.", default=False)] = False,
     file_name: Annotated[Optional[str], Field(description="Custom filename for the output file (without extension). If not provided, a unique identifier will be used.", default=None)] = None,
-    add_unique_prefix: Annotated[bool, Field(description="If true, adds 8-char UUID prefix to filename for uniqueness. Default false - LibreChat handles uniqueness with its own UUID prefix.", default=False)] = False,
+    add_unique_prefix: Annotated[Optional[bool], Field(description="If true, adds 8-char UUID prefix to filename for uniqueness. If not set, defaults to True for traditional storage backends (LOCAL/S3/GCS/AZURE/MINIO) and False for LibreChat.", default=None)] = None,
 ) -> Union[str, dict]:
     """Creates PowerPoint presentations with structured slide models and professional templates.
 
@@ -370,7 +370,7 @@ async def create_email_draft(
     priority: Annotated[str, Field(description="Email priority: 'low', 'normal', or 'high'", default="normal")],
     language: Annotated[str, Field(description="Language code for proofreading in Outlook (e.g., 'cs-CZ' for Czech, 'en-US' for English, 'de-DE' for German, 'sk-SK' for Slovak)", default="cs-CZ")],
     file_name: Annotated[Optional[str], Field(description="Custom filename for the output file (without extension). If not provided, a unique identifier will be used.", default=None)] = None,
-    add_unique_prefix: Annotated[bool, Field(description="If true, adds 8-char UUID prefix to filename for uniqueness. Default false - LibreChat handles uniqueness with its own UUID prefix.", default=False)] = False,
+    add_unique_prefix: Annotated[Optional[bool], Field(description="If true, adds 8-char UUID prefix to filename for uniqueness. If not set, defaults to True for traditional storage backends (LOCAL/S3/GCS/AZURE/MINIO) and False for LibreChat.", default=None)] = None,
 ) -> Union[str, dict]:
     """
     Creates professional email drafts in EML format with preset styling and language settings.
@@ -422,7 +422,7 @@ async def create_email_draft(
 async def create_xml_document(
     xml_content: Annotated[str, Field(description="Complete, well-formed XML content. Must be valid XML with proper opening and closing tags.")],
     file_name: Annotated[Optional[str], Field(description="Custom filename for the output file (without extension). If not provided, a unique identifier will be used.", default=None)] = None,
-    add_unique_prefix: Annotated[bool, Field(description="If true, adds 8-char UUID prefix to filename for uniqueness. Default false - LibreChat handles uniqueness with its own UUID prefix.", default=False)] = False,
+    add_unique_prefix: Annotated[Optional[bool], Field(description="If true, adds 8-char UUID prefix to filename for uniqueness. If not set, defaults to True for traditional storage backends (LOCAL/S3/GCS/AZURE/MINIO) and False for LibreChat.", default=None)] = None,
 ) -> Union[str, dict]:
     """
     Creates an XML file from provided XML content.
