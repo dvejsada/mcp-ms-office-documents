@@ -2,6 +2,8 @@
 
 # 📄 MCP Office Documents Server
 
+[![MCP Toplist](https://mcptoplist.com/badge/glama%2FForLegalAI%2Fmcp-ms-office-documents.svg)](https://mcptoplist.com/server/glama%2FForLegalAI%2Fmcp-ms-office-documents)
+
 **Let your AI assistant create professional Office documents — PowerPoint, Word, Excel, emails & XML — with a single prompt.**
 
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue?logo=docker)](https://hub.docker.com/)
