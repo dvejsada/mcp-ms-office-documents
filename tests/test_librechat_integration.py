@@ -313,7 +313,16 @@ class TestBufferFunctions:
         assert result.tell() == 0
         content = result.read()
         assert len(content) > 0
-        assert b"Test Subject" in content
+        # The Subject header is RFC 2047 encoded (=?utf-8?q?Test_Subject?=)
+        # because it is written as email.header.Header(..., 'utf-8'), so the
+        # literal string never appears in the raw bytes. Decode before
+        # comparing rather than asserting on the encoded form, which would
+        # pin the choice of charset and encoding.
+        import email
+        from email.header import decode_header, make_header
+
+        parsed = email.message_from_bytes(content)
+        assert str(make_header(decode_header(parsed["Subject"]))) == "Test Subject"
         result.close()
 
     def test_create_xml_buffer(self):
