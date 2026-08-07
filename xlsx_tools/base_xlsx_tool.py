@@ -28,6 +28,21 @@ HEADER_FONTS = {
 HEADER_FONT_DEFAULT = Font(size=12, bold=True)
 
 
+def _warn_on_circular_references(xlsx_bytes: bytes, sheet_names: list[str]) -> None:
+    """Log a warning if the saved workbook contains circular references.
+
+    Purely diagnostic — a cycle makes Excel show a warning dialog and resolve
+    the cells to 0, which is silent from this server's side, so we surface it
+    in the logs. Never raises: a detector failure must not block delivery of
+    an otherwise valid document.
+    """
+    try:
+        from .circular_refs import detect_circular_references
+        detect_circular_references(xlsx_bytes, sheet_names)
+    except Exception as e:  # pragma: no cover — defensive
+        logger.debug("Circular-reference detection unavailable: %s", e)
+
+
 def markdown_to_excel(markdown_content: str, file_name: str | None = None, auto_filter: bool = False) -> str:
     """Convert Markdown to Excel workbook (focused on tables and headers).
 
@@ -69,18 +84,35 @@ def markdown_to_excel(markdown_content: str, file_name: str | None = None, auto_
     headers_count = 0
     tables_count = 0
 
+    # Worksheet titles as openpyxl actually stored them. When a '## Sheet:'
+    # name collides with an existing sheet — two long names that become equal
+    # after the 31-char truncation, or a plain duplicate — openpyxl silently
+    # appends a suffix. The cross-sheet position map is keyed by the requested
+    # name, so that divergence routes formulas to the wrong sheet with no
+    # error anywhere. Warn so the caller knows to rename.
+    seen_sheet_titles: set[str] = {ws.title}
+
     try:
         for event in events:
             if isinstance(event, SheetEvent):
                 if event.is_rename:
                     try:
                         ws.title = event.sheet_name
+                        seen_sheet_titles = {ws.title}
                     except (SheetTitleException, ValueError) as exc:
                         logger.warning(
                             "Could not rename worksheet to '%s': %s — using default",
                             event.sheet_name, exc,
                         )
                 else:
+                    if event.sheet_name in seen_sheet_titles:
+                        logger.warning(
+                            "Sheet name '%s' collides with an existing sheet after "
+                            "sanitization; openpyxl will auto-rename it, which "
+                            "breaks cross-sheet references that use the original "
+                            "name. Use a distinct sheet name.",
+                            event.sheet_name,
+                        )
                     try:
                         ws = wb.create_sheet(title=event.sheet_name)
                     except (SheetTitleException, ValueError) as exc:
@@ -89,6 +121,7 @@ def markdown_to_excel(markdown_content: str, file_name: str | None = None, auto_
                             event.sheet_name, exc,
                         )
                         ws = wb.create_sheet()
+                    seen_sheet_titles.add(ws.title)
                     table_positions = {}
 
             elif isinstance(event, HeaderEvent):
@@ -137,6 +170,7 @@ def markdown_to_excel(markdown_content: str, file_name: str | None = None, auto_
     try:
         logger.info("Saving Excel workbook to memory buffer (headers=%d, tables=%d)", headers_count, tables_count)
         wb.save(file_object)
+        _warn_on_circular_references(file_object.getvalue(), wb.sheetnames)
         file_object.seek(0)
         result = upload_file(file_object, "xlsx", filename=file_name)
         logger.info("Excel upload completed successfully")
@@ -233,6 +267,7 @@ def _markdown_to_excel_buffer(markdown_content: str, auto_filter: bool = False) 
     file_object = io.BytesIO()
     try:
         wb.save(file_object)
+        _warn_on_circular_references(file_object.getvalue(), wb.sheetnames)
         file_object.seek(0)
         return file_object
     except Exception as e:

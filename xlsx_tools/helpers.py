@@ -303,12 +303,42 @@ def _resolve_row(positions: dict[str, int], table_num: int, offset: int, fallbac
 
     Returns:
         The absolute Excel row number.
+
+    A missing table key (e.g. ``T9`` when only 3 tables exist) is logged at
+    WARNING level. The formula still resolves — using ``fallback_row`` — so the
+    file ships, but the reference almost certainly points at the wrong cell,
+    which is otherwise a silent failure the caller has no way to notice.
     """
     key = f"T{table_num}"
     base = positions.get(key)
     if base is not None:
         return base + 1 + offset  # +1 to skip header row
+    logger.warning(
+        "Formula references %s but no such table exists in the target sheet "
+        "(known tables: %s); falling back to the current row. This likely "
+        "produces a wrong cell reference — check the table numbering.",
+        key, ", ".join(sorted(positions.keys())) or "none",
+    )
     return fallback_row + offset
+
+
+def _warn_unknown_sheet(sheet: str, all_sheet_table_positions: dict[str, dict[str, int]]) -> None:
+    """Log a warning when a cross-sheet reference names a sheet that doesn't exist.
+
+    The formula still resolves (the regex emits a syntactically valid
+    cross-sheet reference), but Excel will show ``#REF!`` on open. Surfacing
+    the typo during generation — e.g. ``Revenue!T1.B[0]`` when the sheet is
+    actually named ``Revenue Model`` — beats letting it fail silently in the
+    client.
+    """
+    if sheet not in all_sheet_table_positions:
+        known = ", ".join(sorted(all_sheet_table_positions.keys())) or "none"
+        logger.warning(
+            "Formula references sheet '%s' which does not exist in the workbook "
+            "(known sheets: %s). The generated reference will likely resolve to "
+            "#REF! in Excel.",
+            sheet, known,
+        )
 
 
 def _make_cell_ref(column: str, row: int, sheet: str | None = None) -> str:
@@ -352,11 +382,18 @@ def adjust_formula_references(
             start_offset = int(match.group(5))
             end_col = match.group(6)
             end_offset = int(match.group(7))
+            _warn_unknown_sheet(sheet, all_sheet_table_positions)
             pos = all_sheet_table_positions.get(sheet, {})
             sr = _resolve_row(pos, table_num, start_offset, current_excel_row)
             er = _resolve_row(pos, table_num, end_offset, current_excel_row)
             qs = _quote_sheet_name(sheet)
-            result = f"{func_name}({qs}!{start_col}{sr}:{qs}!{end_col}{er})"
+            # The sheet prefix belongs on the FIRST endpoint only:
+            # =SUM(Data!B2:B4). This is the canonical form Excel itself
+            # writes; repeating the prefix on both endpoints is redundant
+            # and needlessly divergent, and the quoted variant
+            # ('My Sheet'!B2:'My Sheet'!B4) is a shape third-party parsers
+            # are much less likely to have been tested against.
+            result = f"{func_name}({qs}!{start_col}{sr}:{end_col}{er})"
             logger.debug("  Cross-sheet func: %s → %s", match.group(0), result)
             return result
 
@@ -373,6 +410,7 @@ def adjust_formula_references(
             et_num = int(match.group(5))
             end_col = match.group(6)
             end_offset = int(match.group(7))
+            _warn_unknown_sheet(sheet, all_sheet_table_positions)
             pos = all_sheet_table_positions.get(sheet, {})
             sr = _resolve_row(pos, st_num, start_offset, current_excel_row)
             er = _resolve_row(pos, et_num, end_offset, current_excel_row)
@@ -391,6 +429,7 @@ def adjust_formula_references(
             table_num = int(match.group(2))
             column = match.group(3)
             offset = int(match.group(4))
+            _warn_unknown_sheet(sheet, all_sheet_table_positions)
             pos = all_sheet_table_positions.get(sheet, {})
             actual_row = _resolve_row(pos, table_num, offset, current_excel_row)
             result = _make_cell_ref(column, actual_row, sheet)
@@ -514,14 +553,66 @@ _CURRENCY_FORMATS = {
 }
 
 
+# Type keywords that legitimately start a new column spec. Used by
+# _parse_types_directive to tell a real column boundary from a comma that
+# lives inside an Excel number format (e.g. the ',' in number:#,##0).
+_KNOWN_TYPE_KEYWORDS = frozenset(
+    {"text", "bool", "currency", "number", "date", "percent"}
+)
+
+
 def _parse_types_directive(value: str) -> list[str | None]:
     """Parse a types directive value like 'text, currency:$, date, bool, number'.
 
     Returns a list of type specs (or None for unspecified columns).
+
+    Commas separate columns, but Excel number formats themselves contain
+    commas (``#,##0``), so a naive ``split(',')`` shreds a literal format like
+    ``number:#,##0.00`` into ``number:#`` + ``##0.00`` and shifts every later
+    column by one — silent data corruption with no error. We split on commas
+    but re-join any fragment that does NOT start a new column spec back onto
+    the previous one. A new column spec is either empty (unspecified column)
+    or begins with a known type keyword; anything else is a continuation of
+    the preceding fragment's format string.
     """
     if not value:
         return []
-    return [t.strip() or None for t in value.split(',')]
+    specs: list[str | None] = []
+    for frag in value.split(','):
+        stripped = frag.strip()
+        token = stripped.split(':', 1)[0].strip().lower()
+        is_new_spec = (stripped == "") or (token in _KNOWN_TYPE_KEYWORDS)
+        if is_new_spec or not specs:
+            specs.append(stripped or None)
+        else:
+            # Continuation of a literal format that contained a comma —
+            # re-join with the comma that split() consumed.
+            prev = specs[-1] or ""
+            specs[-1] = f"{prev},{frag}".strip() or None
+    return specs
+
+
+def _strip_thousands_separators(text: str) -> str:
+    """Normalise a numeric string that may carry thousands/decimal separators.
+
+    Handles English (``1,234.56``), European (``1.234,56``) and bare thousands
+    (``1,234``). Returns a string suitable for ``float()``; input that isn't
+    numeric is returned unchanged so the caller's ``float()`` still raises.
+
+    The ambiguous case is a lone comma: ``1,234`` is read as thousands (exactly
+    three trailing digits), ``1,5`` as a European decimal.
+    """
+    text = text.strip()
+    if ',' not in text:
+        return text
+    if '.' in text:
+        # Both separators present — the LAST one is the decimal separator.
+        if text.rfind(',') > text.rfind('.'):
+            return text.replace('.', '').replace(',', '.')  # European 1.234,56
+        return text.replace(',', '')                        # English  1,234.56
+    if len(text.rsplit(',', 1)[-1]) == 3:
+        return text.replace(',', '')     # thousands: 1,234
+    return text.replace(',', '.')        # European decimal: 1,5
 
 
 def _apply_column_type(cell, raw_text: str, type_spec: str | None) -> bool:
@@ -557,28 +648,18 @@ def _apply_column_type(cell, raw_text: str, type_spec: str | None) -> bool:
         symbol = type_spec.split(':', 1)[1].strip() if ':' in type_spec else '$'
         if not symbol:
             symbol = '$'  # Default if directive is 'currency:' with no symbol
-        # Strip the currency symbol and common thousand separators
+        # Strip the currency symbol and any spacing around the number.
         numeric_str = clean.replace(symbol, '').replace(' ', '').strip()
-        # Handle both comma-as-thousands (1,234.56) and dot-as-thousands (1.234,56)
-        if ',' in numeric_str and '.' in numeric_str:
-            # Determine which is the decimal separator (last one wins)
-            last_comma = numeric_str.rfind(',')
-            last_dot = numeric_str.rfind('.')
-            if last_comma > last_dot:
-                # European: 1.234,56
-                numeric_str = numeric_str.replace('.', '').replace(',', '.')
-            else:
-                # English: 1,234.56
-                numeric_str = numeric_str.replace(',', '')
-        elif ',' in numeric_str and '.' not in numeric_str:
-            # Could be thousands (1,234) or decimal (1,5) — assume thousands if >3 digits after comma
-            parts = numeric_str.split(',')
-            if len(parts[-1]) == 3:
-                numeric_str = numeric_str.replace(',', '')
-            else:
-                numeric_str = numeric_str.replace(',', '.')
+        # Accounting-style negatives wrap the amount in parentheses:
+        # ($1,234) means -1234. Strip them and negate after parsing —
+        # float('(1234)') raises, so without this the cell stayed text.
+        is_negative = numeric_str.startswith('(') and numeric_str.endswith(')')
+        if is_negative:
+            numeric_str = numeric_str[1:-1]
+        numeric_str = _strip_thousands_separators(numeric_str)
         try:
-            cell.value = float(numeric_str)
+            value = float(numeric_str)
+            cell.value = -abs(value) if is_negative else value
             cell.number_format = _CURRENCY_FORMATS.get(symbol, f'#,##0.00 "{symbol}"')
         except ValueError:
             cell.value = clean  # Can't parse → keep as text
@@ -587,7 +668,10 @@ def _apply_column_type(cell, raw_text: str, type_spec: str | None) -> bool:
     # number or number:<format> — parse as number with optional format
     if type_lower.startswith('number'):
         fmt = type_spec.split(':', 1)[1].strip() if ':' in type_spec else None
-        numeric_str = clean.replace(',', '').replace(' ', '')
+        # Was `clean.replace(',', '')`, which turned the European decimal
+        # '1,5' into 15 — a silent 10x error. _strip_thousands_separators
+        # distinguishes a thousands comma from a decimal comma.
+        numeric_str = _strip_thousands_separators(clean.replace(' ', ''))
         try:
             cell.value = float(numeric_str)
             if fmt:
@@ -621,6 +705,43 @@ def _apply_column_type(cell, raw_text: str, type_spec: str | None) -> bool:
         return True
 
     return False
+
+
+def _number_format_for_type(type_spec: str | None) -> str | None:
+    """Return the Excel number format a column ``types`` spec implies, or None.
+
+    Used to format a *formula* cell sitting in a typed column. Formula cells
+    bypass :func:`_apply_column_type` — their value is a formula to resolve,
+    not a literal to coerce — so without this they lose the column's intended
+    format and a ``=SUM(...)`` in a ``currency:$`` column renders as a bare
+    number.
+
+    Mirrors the format selection in :func:`_apply_column_type` without
+    touching the cell value. Returns None for types with no numeric format
+    (``text``/``bool``), for unknown specs, and for the bare ``number``/``date``
+    forms whose format is chosen from the parsed value (which a formula
+    doesn't have until Excel evaluates it).
+    """
+    if not type_spec:
+        return None
+    type_lower = type_spec.lower()
+
+    if type_lower.startswith('currency'):
+        symbol = type_spec.split(':', 1)[1].strip() if ':' in type_spec else '$'
+        if not symbol:
+            symbol = '$'
+        return _CURRENCY_FORMATS.get(symbol, f'#,##0.00 "{symbol}"')
+
+    if type_lower == 'percent':
+        return '0%'
+
+    if type_lower.startswith(('number', 'date')):
+        # Only an explicit format applies; the bare form is value-derived.
+        if ':' not in type_spec:
+            return None
+        return type_spec.split(':', 1)[1].strip() or None
+
+    return None
 
 
 # ── Table Rendering ───────────────────────────────────────────────────────────
@@ -667,7 +788,14 @@ def add_table_to_sheet(
                 if row_idx > 0 and col_type:
                     # Strip markdown formatting before type coercion
                     clean_text, fmt_info = _strip_markdown_formatting(cell_text)
-                    if _apply_column_type(cell, clean_text, col_type):
+                    # A formula cell must NOT go through type coercion: its
+                    # references still need resolving by
+                    # adjust_formula_references, and float('=SUM(B[0]:B[2])')
+                    # raises — leaving the unresolved literal in the cell,
+                    # which Excel shows as #NAME?. Fall through to the formula
+                    # path below, which re-applies the column's number format.
+                    is_formula = clean_text.startswith('=')
+                    if not is_formula and _apply_column_type(cell, clean_text, col_type):
                         # Type directive handled the cell value — apply formatting, border, alignment
                         apply_cell_formatting(cell, fmt_info)
                         cell.border = border
@@ -690,6 +818,15 @@ def add_table_to_sheet(
                     )
                     cell.value = adjusted_formula
                     cell.fill = formula_fill
+                    # A formula in a typed column takes the column's intended
+                    # number format for its (numeric) result — e.g. a =SUM(...)
+                    # in a `currency:$` column displays as currency. Harmless
+                    # on non-numeric results: Excel ignores number formats on
+                    # strings and errors.
+                    if row_idx > 0 and col_type:
+                        type_fmt = _number_format_for_type(col_type)
+                        if type_fmt:
+                            cell.number_format = type_fmt
                 else:
                     # Header row must remain as strings — Excel Tables require
                     # string headers; numeric-looking headers (e.g. "2024") must
@@ -746,8 +883,11 @@ def add_table_to_sheet(
         max_length = 0
         for row_idx, row in enumerate(table_data):
             if col_idx < len(row):
-                # For data rows with a type directive, estimate from the directive
-                if row_idx > 0 and col_type:
+                # For data rows with a type directive, estimate from the directive.
+                # Formula cells are the exception — they're rendered by Excel as
+                # the result, so their source length says nothing about display
+                # width (and would blow the column out to MAX_COLUMN_WIDTH).
+                if row_idx > 0 and col_type and not row[col_idx].strip().lstrip('*`').startswith('='):
                     type_lower = col_type.lower()
                     if type_lower == 'bool':
                         length = 5  # "FALSE" is longest
