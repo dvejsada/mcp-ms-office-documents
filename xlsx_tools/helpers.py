@@ -46,6 +46,35 @@ DATE_FORMATS: list[tuple[str, str]] = [
     ("%B %d, %Y", "MMMM DD, YYYY"),
 ]
 
+# Digit-grouping patterns accepted in columns with no `types` directive.
+#
+# A lone comma is deliberately NOT enough: "1,5" is 1.5 across most of Europe
+# and 15 nowhere, so auto-detection must not guess at it. Only groups of
+# exactly three digits are unambiguous:
+#     1,234    1,234.56    1,234,567.89      comma grouping, dot decimal
+#     1.234,56             1.234.567         dot grouping, comma decimal
+# Dot grouping additionally needs a disambiguator — a comma decimal part or a
+# second group — because a bare "1.234" is a plain decimal in English and must
+# keep parsing as 1.234.
+#
+# A column that needs the ambiguous forms should declare `types: number`,
+# which applies the full locale heuristic in _strip_thousands_separators.
+_GROUPED_COMMA_RE = re.compile(r'^[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?$')
+_GROUPED_DOT_RE = re.compile(
+    r'^[+-]?\d{1,3}(?:\.\d{3})+,\d+$'       # 1.234,56
+    r'|^[+-]?\d{1,3}(?:\.\d{3}){2,}$'       # 1.234.567
+)
+
+# Excel number formats for plain numeric cells (no `types` directive). Only
+# applied from 1000 up, where digit grouping is the point; below that the
+# General format shows the value as written and is left alone.
+THOUSANDS_FORMAT = '#,##0'
+THOUSANDS_FORMAT_DECIMALS = '#,##0.00'
+_THOUSANDS_THRESHOLD = 1000
+
+# Cap on decimals carried from a percentage's source text into its format.
+_PERCENT_MAX_DECIMALS = 4
+
 # Minimum length to even attempt date parsing (avoids matching plain numbers)
 _MIN_DATE_LENGTH = 6
 # Regex to quickly reject values that clearly can't be dates
@@ -87,6 +116,42 @@ def _try_parse_date(value: str) -> tuple[datetime, str] | None:
         pass
 
     return None
+
+
+def _normalize_grouped_number(text: str) -> str:
+    """Strip digit-group separators when the grouping is unambiguous.
+
+    Returns ``text`` unchanged when the grouping could be read more than one
+    way, so the caller's ``float()`` still rejects it and the value stays text.
+    """
+    if _GROUPED_COMMA_RE.match(text):
+        return text.replace(',', '')
+    if _GROUPED_DOT_RE.match(text):
+        return text.replace('.', '').replace(',', '.')
+    return text
+
+
+def _thousands_format_for(value: float) -> str:
+    """Pick the grouped number format for a plain numeric cell.
+
+    Whole numbers take the integer format; anything else keeps two decimals.
+    Previously every value from 1000 up got ``#,##0`` unconditionally, which
+    silently displayed 1500.75 as ``1,501`` — the stored value was right but
+    the number a reader saw was not.
+    """
+    return THOUSANDS_FORMAT if float(value).is_integer() else THOUSANDS_FORMAT_DECIMALS
+
+
+def _percent_format_for(numeric_text: str) -> str:
+    """Build a percent format that preserves the precision of the source text.
+
+    ``50%`` → ``0%``, ``50.5%`` → ``0.0%``, ``50.25%`` → ``0.00%``. The format
+    was previously a flat ``0%``, which rendered 50.5% as ``51%`` — a visible
+    value the source never contained.
+    """
+    fraction = numeric_text.strip().replace(',', '.').partition('.')[2].strip()
+    decimals = min(len(fraction), _PERCENT_MAX_DECIMALS)
+    return f"0.{'0' * decimals}%" if decimals else '0%'
 
 
 def _is_separator_row(line: str) -> bool:
@@ -178,6 +243,7 @@ class CellResult:
     value: str | int | float | datetime  # The cleaned value to write
     is_formula: bool = False
     is_percent: bool = False
+    percent_format: str = ""  # Excel number format for percents (e.g. "0.0%")
     is_date: bool = False
     date_format: str = ""  # Excel number format for dates (e.g. "YYYY-MM-DD")
     bold: bool = False
@@ -237,18 +303,21 @@ def resolve_cell(raw_text: str) -> CellResult:
     # Step 3: Detect percent and convert to number
     is_percent = clean_text.endswith('%')
     if is_percent:
+        percent_body = clean_text[:-1]
         try:
-            numeric_val = float(clean_text[:-1]) / 100
+            numeric_val = float(percent_body) / 100
             return CellResult(
                 value=numeric_val, is_percent=True,
+                percent_format=_percent_format_for(percent_body),
                 bold=bold, italic=italic, monospace=monospace,
             )
         except ValueError:
             pass  # Not a valid percent number — fall through
 
-    # Step 5: Try numeric conversion
+    # Step 4: Try numeric conversion. Digit-group separators are stripped only
+    # when the grouping is unambiguous — see _normalize_grouped_number.
     try:
-        numeric_val = float(clean_text)
+        numeric_val = float(_normalize_grouped_number(clean_text))
         return CellResult(
             value=numeric_val,
             bold=bold, italic=italic, monospace=monospace,
@@ -256,7 +325,7 @@ def resolve_cell(raw_text: str) -> CellResult:
     except ValueError:
         pass
 
-    # Step 6: Try date detection (after numeric, so "2024" isn't parsed as a date)
+    # Step 5: Try date detection (after numeric, so "2024" isn't parsed as a date)
     date_result = _try_parse_date(clean_text)
     if date_result:
         dt, xl_fmt = date_result
@@ -265,7 +334,7 @@ def resolve_cell(raw_text: str) -> CellResult:
             bold=bold, italic=italic, monospace=monospace,
         )
 
-    # Step 7: Plain text
+    # Step 6: Plain text
     return CellResult(
         value=clean_text,
         bold=bold, italic=italic, monospace=monospace,
@@ -488,11 +557,20 @@ def adjust_formula_references(
 
         adjusted = re.sub(table_pattern, replace_table_reference, adjusted)
 
-        # Determine current table start for relative references
-        current_table_start = None
-        for table_key, table_start_row in table_positions.items():
-            if table_start_row <= current_excel_row:
-                current_table_start = table_start_row
+        # ── Row-relative references: B[0], A[-1], B[0]:E[0] ──
+        #
+        # These are offsets from the row the formula LIVES ON: in a formula on
+        # row 7, B[0] is B7, B[-1] is B6, B[1] is B8. That is what the tool
+        # description documents ("B[0] for current row references") and it is
+        # the only reading under which the syntax means anything: resolving
+        # B[n] against the table's first data row — as this did previously —
+        # makes it an exact duplicate of the T1.B[n] form handled above.
+        #
+        # The practical consequence of the old behaviour was that every data
+        # row of a computed column produced the SAME formula: `=B[0]*C[0]`
+        # written down a table resolved to `=B4*C4` on every row, so running
+        # totals, per-row products and growth rates were all silently wrong.
+        # Point at a fixed cell with T1.B[n]; point at the current row with B[n].
 
         # Row-relative range e.g. B[0]:E[0] (BEFORE single-cell relative)
         range_pattern = r'([A-Z]+)\[([+-]?\d+)\]:([A-Z]+)\[([+-]?\d+)\]'
@@ -502,12 +580,8 @@ def adjust_formula_references(
             start_offset = int(match.group(2))
             end_col = match.group(3)
             end_offset = int(match.group(4))
-            if current_table_start is not None:
-                start_row = current_table_start + 1 + start_offset
-                end_row = current_table_start + 1 + end_offset
-            else:
-                start_row = current_excel_row + start_offset
-                end_row = current_excel_row + end_offset
+            start_row = current_excel_row + start_offset
+            end_row = current_excel_row + end_offset
             return f"{start_col}{start_row}:{end_col}{end_row}"
 
         adjusted = re.sub(range_pattern, replace_range, adjusted)
@@ -518,11 +592,7 @@ def adjust_formula_references(
         def replace_rel(match):
             column = match.group(1)
             offset = int(match.group(2))
-            if current_table_start is not None:
-                actual_row = current_table_start + 1 + offset
-            else:
-                actual_row = current_excel_row + offset
-            result = f"{column}{actual_row}"
+            result = f"{column}{current_excel_row + offset}"
             logger.debug("  Relative ref: %s → %s", match.group(0), result)
             return result
 
@@ -676,8 +746,8 @@ def _apply_column_type(cell, raw_text: str, type_spec: str | None) -> bool:
             cell.value = float(numeric_str)
             if fmt:
                 cell.number_format = fmt
-            elif cell.value >= 1000:
-                cell.number_format = '#,##0'
+            elif abs(cell.value) >= _THOUSANDS_THRESHOLD:
+                cell.number_format = _thousands_format_for(cell.value)
         except ValueError:
             cell.value = clean
         return True
@@ -699,7 +769,7 @@ def _apply_column_type(cell, raw_text: str, type_spec: str | None) -> bool:
         numeric_str = clean.rstrip('%').strip()
         try:
             cell.value = float(numeric_str) / 100
-            cell.number_format = '0%'
+            cell.number_format = _percent_format_for(numeric_str)
         except ValueError:
             cell.value = clean
         return True
@@ -861,12 +931,14 @@ def add_table_to_sheet(
                 if row_idx == 0:
                     cell.font = header_font
                     cell.fill = header_fill
-                elif isinstance(cell.value, (int, float)) and cell.value >= 1000:
-                    cell.number_format = '#,##0'
+                elif isinstance(cell.value, (int, float)) and abs(cell.value) >= _THOUSANDS_THRESHOLD:
+                    # abs() so that -5000 is grouped like 5000; the old
+                    # `>= 1000` test left every negative value unformatted.
+                    cell.number_format = _thousands_format_for(cell.value)
 
-                # Apply percentage number format
+                # Apply percentage number format, at the source text's precision
                 if resolved.is_percent and isinstance(cell.value, (int, float)):
-                    cell.number_format = '0%'
+                    cell.number_format = resolved.percent_format or '0%'
 
                 # Apply date number format
                 if resolved.is_date and resolved.date_format:
