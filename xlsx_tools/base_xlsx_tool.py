@@ -78,6 +78,13 @@ def _build_workbook(markdown_content: str, auto_filter: bool = False) -> Workboo
     ws = wb.active
     ws.title = _sanitize_sheet_name(DEFAULT_SHEET_NAME)
 
+    # Named styles from the optional custom_xlsx_template.xlsx, referenceable
+    # from a `styles:` directive as `style:Name`. Registering them up front
+    # means a reference can be validated at write time rather than producing a
+    # workbook that silently lost its formatting.
+    from .styles import load_template_styles
+    available_styles = load_template_styles().register_into(wb)
+
     # Per-sheet state for formula resolution
     table_positions: dict[str, int] = {}
 
@@ -141,6 +148,7 @@ def _build_workbook(markdown_content: str, auto_filter: bool = False) -> Workboo
                     auto_filter=auto_filter,
                     table_index=tables_count,
                     directives=event.directives,
+                    available_styles=available_styles,
                 )
 
                 # Handle freeze directive — freeze below header row of this table
