@@ -327,6 +327,13 @@ def _build_dependency_graph(
                 value = cell.value
                 if not isinstance(value, str) or not value.startswith("="):
                     continue
+                # `=`-prefixed text is not necessarily a formula: an
+                # over-length formula is deliberately stored as an inline
+                # string (see helpers._write_formula), and Excel will never
+                # evaluate it. Such a cell cannot take part in a cycle, so
+                # counting it would only invent one.
+                if cell.data_type != "f":
+                    continue
                 node = _format_location(sheet_name, cell.coordinate)
                 graph[node] = extract_formula_references(value, sheet_name, sheet_lookup)
 

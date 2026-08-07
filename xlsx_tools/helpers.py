@@ -898,28 +898,29 @@ def _ensure_unique_table_headers(worksheet, header_row: int, num_cols: int) -> N
     seen: set[str] = set()
     for col_idx in range(1, num_cols + 1):
         cell = worksheet.cell(row=header_row, column=col_idx)
-        name = str(cell.value).strip() if cell.value is not None else ""
+        original = str(cell.value).strip() if cell.value is not None else ""
 
-        if not name:
-            name = f"Column{col_idx}"
-            logger.warning(
-                "Table header %s is empty; Excel Tables require a name for "
-                "every column — using '%s'.",
-                cell.coordinate, name,
-            )
-        elif name.casefold() in seen:
-            original, suffix = name, 2
-            while f"{original}_{suffix}".casefold() in seen:
+        # The positional fallback for a blank heading is just a candidate name
+        # like any other: it has to clear the uniqueness check too. Exempting
+        # it — as an earlier version did — reintroduced the exact duplicate
+        # this function exists to prevent, whenever a real column happened to
+        # be named "ColumnN" and column N was blank.
+        name = original or f"Column{col_idx}"
+        if name.casefold() in seen:
+            base, suffix = name, 2
+            while f"{base}_{suffix}".casefold() in seen:
                 suffix += 1
-            name = f"{original}_{suffix}"
-            logger.warning(
-                "Duplicate table header '%s' at %s; Excel Tables require "
-                "unique column names — renamed to '%s'.",
-                original, cell.coordinate, name,
-            )
+            name = f"{base}_{suffix}"
 
         seen.add(name.casefold())
-        if cell.value != name:
+        if name != original:
+            logger.warning(
+                "Table header %s (%s) can't be used as an Excel Table column "
+                "name — they must be non-empty and unique — using '%s'.",
+                cell.coordinate,
+                f"'{original}'" if original else "empty",
+                name,
+            )
             cell.value = name
 
 
@@ -1065,10 +1066,13 @@ def add_table_to_sheet(
         for row_idx, row in enumerate(table_data):
             if col_idx < len(row):
                 # For data rows with a type directive, estimate from the directive.
-                # Formula cells are the exception — they're rendered by Excel as
-                # the result, so their source length says nothing about display
+                # Formula cells are the exception — Excel renders them as the
+                # result, so their source length says nothing about display
                 # width (and would blow the column out to MAX_COLUMN_WIDTH).
-                if row_idx > 0 and col_type and not row[col_idx].strip().lstrip('*`').startswith('='):
+                # Uses the same formula test as the rendering loop above rather
+                # than a second, cruder one.
+                cell_is_formula = _strip_markdown_formatting(row[col_idx])[0].startswith('=')
+                if row_idx > 0 and col_type and not cell_is_formula:
                     type_lower = col_type.lower()
                     if type_lower == 'bool':
                         length = 5  # "FALSE" is longest

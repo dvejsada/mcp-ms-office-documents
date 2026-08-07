@@ -202,6 +202,32 @@ class TestExcelTableHeaders:
         names = _table_column_names(buf.getvalue())
         assert len({n.casefold() for n in names}) == 2
 
+    @pytest.mark.parametrize("headers,expected", [
+        # The positional fallback collides with a real column of that name.
+        (["Column2", ""], ["Column2", "Column2_2"]),
+        # ...and with a later blank whose fallback matches an earlier header.
+        (["Column3", "", ""], ["Column3", "Column2", "Column3_2"]),
+        # A real header already shaped like a generated suffix.
+        (["Q1", "Q1", "Q1_2"], ["Q1", "Q1_2", "Q1_2_2"]),
+        (["", ""], ["Column1", "Column2"]),
+    ])
+    def test_fallback_names_are_deduplicated_too(self, headers, expected):
+        """The blank-header fallback must clear the uniqueness check as well.
+
+        Exempting it reintroduced the duplicate this function exists to
+        prevent, whenever a real column was named "ColumnN" and column N
+        happened to be blank.
+        """
+        from xlsx_tools.helpers import add_table_to_sheet
+        wb = Workbook()
+        add_table_to_sheet([headers, ["x"] * len(headers)], wb.active, 1,
+                           {}, {}, auto_filter=True)
+        buf = io.BytesIO()
+        wb.save(buf)
+        names = _table_column_names(buf.getvalue())
+        assert names == expected
+        assert len({n.casefold() for n in names}) == len(names)
+
     def test_unique_headers_untouched(self):
         from xlsx_tools.helpers import add_table_to_sheet
         wb = Workbook()
@@ -235,6 +261,34 @@ class TestFormulaLengthGuard:
         with caplog.at_level("WARNING"):
             _workbook_bytes(f"| Item | Value |\n|------|-------|\n| A | {long_formula} |\n")
         assert "over Excel's" in caplog.text
+
+    def test_text_stored_formula_is_not_a_cycle(self):
+        """A text-stored formula is never evaluated, so it can't be circular.
+
+        The cell value still starts with '=', so a detector keyed on that
+        alone would invent a cycle for a formula Excel treats as a label.
+        """
+        from xlsx_tools.circular_refs import detect_circular_references
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Sheet"
+        ws["A1"] = "=A1+1"          # self-referential text, not a formula
+        ws["A1"].data_type = "s"
+        buf = io.BytesIO()
+        wb.save(buf)
+        assert detect_circular_references(buf.getvalue(), wb.sheetnames) == []
+
+    def test_real_formula_still_detected_as_a_cycle(self):
+        from xlsx_tools.circular_refs import detect_circular_references
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Sheet"
+        ws["A1"] = "=A1+1"
+        buf = io.BytesIO()
+        wb.save(buf)
+        assert len(detect_circular_references(buf.getvalue(), wb.sheetnames)) == 1
 
     def test_normal_formula_still_a_formula(self):
         wb = load_workbook(io.BytesIO(_workbook_bytes(
