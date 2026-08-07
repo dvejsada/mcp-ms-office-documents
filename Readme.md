@@ -364,10 +364,29 @@ The `<!-- style: Name -->` directive applies a style to the next block only — 
 | Reference form | Meaning |
 |----------------|---------|
 | `=A1`, `=SUM(A1:A5)` | Standard Excel references and functions |
-| `[offset]` | Row-relative reference within the column (e.g. `=[−1]*1.2`) |
-| `T1.B[0]` | Table 1, column B, data row 0 |
+| `B[0]` | **Current row**, column B — moves with the formula. `B[-1]` is the row above, `B[1]` the row below |
+| `SUM(B[-3]:B[-1])` | Range over the current row's neighbours |
+| `T1.B[0]` | **Table-relative**: table 1, column B, first data row — a fixed cell, does not move |
 | `T1.SUM(B[0]:E[0])` | Function over a table range |
 | `SheetName!T1.B[0]` | Cross-sheet table reference |
+
+The two `[n]` forms are different on purpose. Write `=B[0]*C[0]` in every data
+row to get a per-row calculation; use `T1.B[0]` to point every row at one fixed
+cell, such as a total or a shared assumption. The first data row is index `[0]`
+— the header is not counted.
+
+```markdown
+| Month | Sales | Cumulative  | Growth        |
+|-------|-------|-------------|---------------|
+| Jan   | 100   | =B[0]       |               |
+| Feb   | 200   | =C[-1]+B[0] | =B[0]/B[-1]-1 |
+| Mar   | 300   | =C[-1]+B[0] | =B[0]/B[-1]-1 |
+| Total | =SUM(T1.B[0]:T1.B[2]) | | |
+```
+
+Circular references (a formula that depends on itself, directly or through a
+chain) are detected during generation and reported in the server log — Excel
+would otherwise show a warning dialog and silently resolve those cells to 0.
 
 **Column directives** — place on the line directly above a table:
 

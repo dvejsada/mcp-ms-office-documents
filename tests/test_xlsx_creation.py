@@ -367,8 +367,9 @@ class TestAdjustFormulaReferencesUnit:
         result = adjust_formula_references(
             "=Sales!T1.SUM(B[0]:D[0])", 10, {}, all_positions
         )
-        # T1 starts at row 3, data[0] → row 4
-        assert result == "=SUM(Sales!B4:Sales!D4)"
+        # T1 starts at row 3, data[0] → row 4. The sheet prefix appears once,
+        # on the first endpoint — the canonical form Excel writes.
+        assert result == "=SUM(Sales!B4:D4)"
 
     def test_local_reference_still_works(self):
         from xlsx_tools.helpers import adjust_formula_references
@@ -383,8 +384,9 @@ class TestAdjustFormulaReferencesUnit:
         result = adjust_formula_references(
             "=Revenue!T1.B[0]-B[0]", 5, {"T1": 3}, all_positions
         )
-        # Revenue!T1.B[0] → Revenue!B2, B[0] → B4 (current table starts at 3, data[0] = row 4)
-        assert result == "=Revenue!B2-B4"
+        # Revenue!T1.B[0] is table-relative → Revenue!B2. The bare B[0] is a
+        # current-row reference, so at row 5 it resolves to B5.
+        assert result == "=Revenue!B2-B5"
 
 
 class TestNumberFormats:

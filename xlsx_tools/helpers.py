@@ -1,3 +1,4 @@
+import math
 import re
 import logging
 from dataclasses import dataclass
@@ -46,6 +47,35 @@ DATE_FORMATS: list[tuple[str, str]] = [
     ("%B %d, %Y", "MMMM DD, YYYY"),
 ]
 
+# Digit-grouping patterns accepted in columns with no `types` directive.
+#
+# A lone comma is deliberately NOT enough: "1,5" is 1.5 across most of Europe
+# and 15 nowhere, so auto-detection must not guess at it. Only groups of
+# exactly three digits are unambiguous:
+#     1,234    1,234.56    1,234,567.89      comma grouping, dot decimal
+#     1.234,56             1.234.567         dot grouping, comma decimal
+# Dot grouping additionally needs a disambiguator — a comma decimal part or a
+# second group — because a bare "1.234" is a plain decimal in English and must
+# keep parsing as 1.234.
+#
+# A column that needs the ambiguous forms should declare `types: number`,
+# which applies the full locale heuristic in _strip_thousands_separators.
+_GROUPED_COMMA_RE = re.compile(r'^[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?$')
+_GROUPED_DOT_RE = re.compile(
+    r'^[+-]?\d{1,3}(?:\.\d{3})+,\d+$'       # 1.234,56
+    r'|^[+-]?\d{1,3}(?:\.\d{3}){2,}$'       # 1.234.567
+)
+
+# Excel number formats for plain numeric cells (no `types` directive). Only
+# applied from 1000 up, where digit grouping is the point; below that the
+# General format shows the value as written and is left alone.
+THOUSANDS_FORMAT = '#,##0'
+THOUSANDS_FORMAT_DECIMALS = '#,##0.00'
+_THOUSANDS_THRESHOLD = 1000
+
+# Cap on decimals carried from a percentage's source text into its format.
+_PERCENT_MAX_DECIMALS = 4
+
 # Minimum length to even attempt date parsing (avoids matching plain numbers)
 _MIN_DATE_LENGTH = 6
 # Regex to quickly reject values that clearly can't be dates
@@ -87,6 +117,42 @@ def _try_parse_date(value: str) -> tuple[datetime, str] | None:
         pass
 
     return None
+
+
+def _normalize_grouped_number(text: str) -> str:
+    """Strip digit-group separators when the grouping is unambiguous.
+
+    Returns ``text`` unchanged when the grouping could be read more than one
+    way, so the caller's ``float()`` still rejects it and the value stays text.
+    """
+    if _GROUPED_COMMA_RE.match(text):
+        return text.replace(',', '')
+    if _GROUPED_DOT_RE.match(text):
+        return text.replace('.', '').replace(',', '.')
+    return text
+
+
+def _thousands_format_for(value: float) -> str:
+    """Pick the grouped number format for a plain numeric cell.
+
+    Whole numbers take the integer format; anything else keeps two decimals.
+    Previously every value from 1000 up got ``#,##0`` unconditionally, which
+    silently displayed 1500.75 as ``1,501`` — the stored value was right but
+    the number a reader saw was not.
+    """
+    return THOUSANDS_FORMAT if float(value).is_integer() else THOUSANDS_FORMAT_DECIMALS
+
+
+def _percent_format_for(numeric_text: str) -> str:
+    """Build a percent format that preserves the precision of the source text.
+
+    ``50%`` → ``0%``, ``50.5%`` → ``0.0%``, ``50.25%`` → ``0.00%``. The format
+    was previously a flat ``0%``, which rendered 50.5% as ``51%`` — a visible
+    value the source never contained.
+    """
+    fraction = numeric_text.strip().replace(',', '.').partition('.')[2].strip()
+    decimals = min(len(fraction), _PERCENT_MAX_DECIMALS)
+    return f"0.{'0' * decimals}%" if decimals else '0%'
 
 
 def _is_separator_row(line: str) -> bool:
@@ -178,6 +244,7 @@ class CellResult:
     value: str | int | float | datetime  # The cleaned value to write
     is_formula: bool = False
     is_percent: bool = False
+    percent_format: str = ""  # Excel number format for percents (e.g. "0.0%")
     is_date: bool = False
     date_format: str = ""  # Excel number format for dates (e.g. "YYYY-MM-DD")
     bold: bool = False
@@ -237,26 +304,36 @@ def resolve_cell(raw_text: str) -> CellResult:
     # Step 3: Detect percent and convert to number
     is_percent = clean_text.endswith('%')
     if is_percent:
+        percent_body = clean_text[:-1]
         try:
-            numeric_val = float(clean_text[:-1]) / 100
+            numeric_val = float(percent_body) / 100
             return CellResult(
                 value=numeric_val, is_percent=True,
+                percent_format=_percent_format_for(percent_body),
                 bold=bold, italic=italic, monospace=monospace,
             )
         except ValueError:
             pass  # Not a valid percent number — fall through
 
-    # Step 5: Try numeric conversion
+    # Step 4: Try numeric conversion. Digit-group separators are stripped only
+    # when the grouping is unambiguous — see _normalize_grouped_number.
     try:
-        numeric_val = float(clean_text)
-        return CellResult(
-            value=numeric_val,
-            bold=bold, italic=italic, monospace=monospace,
-        )
+        numeric_val = float(_normalize_grouped_number(clean_text))
     except ValueError:
         pass
+    else:
+        # float() also accepts Python literals that are not spreadsheet
+        # numbers. 'nan'/'inf'/'-Infinity' have no XLSX representation —
+        # openpyxl writes them as an empty <v>, so the cell silently arrives
+        # BLANK — and PEP 515 underscores mean a product code like '1_000'
+        # would quietly become 1000. Both belong in the text branch.
+        if math.isfinite(numeric_val) and '_' not in clean_text:
+            return CellResult(
+                value=numeric_val,
+                bold=bold, italic=italic, monospace=monospace,
+            )
 
-    # Step 6: Try date detection (after numeric, so "2024" isn't parsed as a date)
+    # Step 5: Try date detection (after numeric, so "2024" isn't parsed as a date)
     date_result = _try_parse_date(clean_text)
     if date_result:
         dt, xl_fmt = date_result
@@ -265,7 +342,7 @@ def resolve_cell(raw_text: str) -> CellResult:
             bold=bold, italic=italic, monospace=monospace,
         )
 
-    # Step 7: Plain text
+    # Step 6: Plain text
     return CellResult(
         value=clean_text,
         bold=bold, italic=italic, monospace=monospace,
@@ -273,22 +350,38 @@ def resolve_cell(raw_text: str) -> CellResult:
 
 
 def apply_cell_formatting(cell, formatting_info: dict[str, bool]) -> None:
-    """Apply formatting information to an Excel cell."""
+    """Apply inline markdown formatting (bold/italic/code) to an Excel cell.
+
+    openpyxl fonts are immutable, so each branch builds a replacement rather
+    than mutating. The current font's family is carried over — dropping it
+    silently reset the cell to the workbook default, which is invisible today
+    (everything is Calibri) but would quietly undo any per-cell or
+    workbook-wide font choice layered underneath.
+    """
     current_font = cell.font
     if formatting_info['bold']:
-        cell.font = Font(bold=True, color=current_font.color, size=current_font.size)
+        cell.font = Font(name=current_font.name, bold=True,
+                         color=current_font.color, size=current_font.size)
     elif formatting_info['italic']:
-        cell.font = Font(italic=True, color=current_font.color, size=current_font.size)
+        cell.font = Font(name=current_font.name, italic=True,
+                         color=current_font.color, size=current_font.size)
     elif formatting_info['monospace']:
-        cell.font = Font(name='Courier New', color=current_font.color, size=current_font.size)
+        cell.font = Font(name='Courier New',
+                         color=current_font.color, size=current_font.size)
 
 
 # ── Formula Reference Resolution ─────────────────────────────────────────────
 
 def _quote_sheet_name(name: str) -> str:
-    """Return the sheet name quoted for Excel if it contains spaces or special chars."""
+    """Return the sheet name quoted for Excel if it contains spaces or special chars.
+
+    An apostrophe inside the name is doubled, which is how Excel escapes it
+    within a quoted sheet reference. Without that, a sheet called ``John's
+    Data`` produced ``'John's Data'!B2`` — the quoted section ends at the
+    apostrophe and the rest is garbage, so the whole formula is invalid.
+    """
     if re.search(r"[^A-Za-z0-9_]", name):
-        return f"'{name}'"
+        return "'{}'".format(name.replace("'", "''"))
     return name
 
 
@@ -303,12 +396,62 @@ def _resolve_row(positions: dict[str, int], table_num: int, offset: int, fallbac
 
     Returns:
         The absolute Excel row number.
+
+    A missing table key (e.g. ``T9`` when only 3 tables exist) is logged at
+    WARNING level. The formula still resolves — using ``fallback_row`` — so the
+    file ships, but the reference almost certainly points at the wrong cell,
+    which is otherwise a silent failure the caller has no way to notice.
     """
     key = f"T{table_num}"
     base = positions.get(key)
     if base is not None:
         return base + 1 + offset  # +1 to skip header row
+    logger.warning(
+        "Formula references %s but no such table exists in the target sheet "
+        "(known tables: %s); falling back to the current row. This likely "
+        "produces a wrong cell reference — check the table numbering.",
+        key, ", ".join(sorted(positions.keys())) or "none",
+    )
     return fallback_row + offset
+
+
+def _warn_unknown_sheet(sheet: str, all_sheet_table_positions: dict[str, dict[str, int]]) -> None:
+    """Log a warning when a cross-sheet reference names a sheet that doesn't exist.
+
+    The formula still resolves (the regex emits a syntactically valid
+    cross-sheet reference), but Excel will show ``#REF!`` on open. Surfacing
+    the typo during generation — e.g. ``Revenue!T1.B[0]`` when the sheet is
+    actually named ``Revenue Model`` — beats letting it fail silently in the
+    client.
+    """
+    if sheet not in all_sheet_table_positions:
+        known = ", ".join(sorted(all_sheet_table_positions.keys())) or "none"
+        logger.warning(
+            "Formula references sheet '%s' which does not exist in the workbook "
+            "(known sheets: %s). The generated reference will likely resolve to "
+            "#REF! in Excel.",
+            sheet, known,
+        )
+
+
+# A sheet name inside a cross-sheet reference: either the quoted Excel form or
+# a bare name. Quoting is what makes a name containing an operator character
+# unambiguous — `=A1-P&L!T1.B[0]` cannot be parsed, `=A1-'P&L'!T1.B[0]` can —
+# and it is the form Excel itself writes. Doubled apostrophes inside a quoted
+# name are an escaped apostrophe.
+#
+# Deliberately a single capturing group: the three cross-sheet patterns below
+# index their groups positionally, so an alternation with two groups would
+# shift every later index.
+_SHEET_NAME_PATTERN = r"((?:'[^']*(?:''[^']*)*')|[\w\s.]+)"
+
+
+def _unquote_sheet_name(raw: str) -> str:
+    """Normalise a matched sheet name, stripping Excel quoting if present."""
+    raw = raw.strip()
+    if len(raw) >= 2 and raw.startswith("'") and raw.endswith("'"):
+        return raw[1:-1].replace("''", "'")
+    return raw
 
 
 def _make_cell_ref(column: str, row: int, sheet: str | None = None) -> str:
@@ -342,37 +485,45 @@ def adjust_formula_references(
         # ── Cross-sheet references (must be resolved BEFORE local patterns) ──
 
         # Cross-sheet function: SheetName!T1.SUM(B[0]:E[0])
-        cs_func_pattern = r"([\w\s.]+)!T(\d+)\.(SUM|AVERAGE|MAX|MIN)\(([A-Z]+)\[([+-]?\d+)\]:([A-Z]+)\[([+-]?\d+)\]\)"
+        cs_func_pattern = _SHEET_NAME_PATTERN + r"!T(\d+)\.(SUM|AVERAGE|MAX|MIN)\(([A-Z]+)\[([+-]?\d+)\]:([A-Z]+)\[([+-]?\d+)\]\)"
 
         def _replace_cs_func(match):
-            sheet = match.group(1).strip()
+            sheet = _unquote_sheet_name(match.group(1))
             table_num = int(match.group(2))
             func_name = match.group(3)
             start_col = match.group(4)
             start_offset = int(match.group(5))
             end_col = match.group(6)
             end_offset = int(match.group(7))
+            _warn_unknown_sheet(sheet, all_sheet_table_positions)
             pos = all_sheet_table_positions.get(sheet, {})
             sr = _resolve_row(pos, table_num, start_offset, current_excel_row)
             er = _resolve_row(pos, table_num, end_offset, current_excel_row)
             qs = _quote_sheet_name(sheet)
-            result = f"{func_name}({qs}!{start_col}{sr}:{qs}!{end_col}{er})"
+            # The sheet prefix belongs on the FIRST endpoint only:
+            # =SUM(Data!B2:B4). This is the canonical form Excel itself
+            # writes; repeating the prefix on both endpoints is redundant
+            # and needlessly divergent, and the quoted variant
+            # ('My Sheet'!B2:'My Sheet'!B4) is a shape third-party parsers
+            # are much less likely to have been tested against.
+            result = f"{func_name}({qs}!{start_col}{sr}:{end_col}{er})"
             logger.debug("  Cross-sheet func: %s → %s", match.group(0), result)
             return result
 
         formula = re.sub(cs_func_pattern, _replace_cs_func, formula)
 
         # Cross-sheet range: SheetName!T1.B[0]:T1.E[0]
-        cs_range_pattern = r"([\w\s.]+)!T(\d+)\.([A-Z]+)\[([+-]?\d+)\]:T(\d+)\.([A-Z]+)\[([+-]?\d+)\]"
+        cs_range_pattern = _SHEET_NAME_PATTERN + r"!T(\d+)\.([A-Z]+)\[([+-]?\d+)\]:T(\d+)\.([A-Z]+)\[([+-]?\d+)\]"
 
         def _replace_cs_range(match):
-            sheet = match.group(1).strip()
+            sheet = _unquote_sheet_name(match.group(1))
             st_num = int(match.group(2))
             start_col = match.group(3)
             start_offset = int(match.group(4))
             et_num = int(match.group(5))
             end_col = match.group(6)
             end_offset = int(match.group(7))
+            _warn_unknown_sheet(sheet, all_sheet_table_positions)
             pos = all_sheet_table_positions.get(sheet, {})
             sr = _resolve_row(pos, st_num, start_offset, current_excel_row)
             er = _resolve_row(pos, et_num, end_offset, current_excel_row)
@@ -384,13 +535,14 @@ def adjust_formula_references(
         formula = re.sub(cs_range_pattern, _replace_cs_range, formula)
 
         # Cross-sheet single cell: SheetName!T1.B[0]
-        cs_cell_pattern = r"([\w\s.]+)!T(\d+)\.([A-Z]+)\[([+-]?\d+)\]"
+        cs_cell_pattern = _SHEET_NAME_PATTERN + r"!T(\d+)\.([A-Z]+)\[([+-]?\d+)\]"
 
         def _replace_cs_cell(match):
-            sheet = match.group(1).strip()
+            sheet = _unquote_sheet_name(match.group(1))
             table_num = int(match.group(2))
             column = match.group(3)
             offset = int(match.group(4))
+            _warn_unknown_sheet(sheet, all_sheet_table_positions)
             pos = all_sheet_table_positions.get(sheet, {})
             actual_row = _resolve_row(pos, table_num, offset, current_excel_row)
             result = _make_cell_ref(column, actual_row, sheet)
@@ -449,11 +601,20 @@ def adjust_formula_references(
 
         adjusted = re.sub(table_pattern, replace_table_reference, adjusted)
 
-        # Determine current table start for relative references
-        current_table_start = None
-        for table_key, table_start_row in table_positions.items():
-            if table_start_row <= current_excel_row:
-                current_table_start = table_start_row
+        # ── Row-relative references: B[0], A[-1], B[0]:E[0] ──
+        #
+        # These are offsets from the row the formula LIVES ON: in a formula on
+        # row 7, B[0] is B7, B[-1] is B6, B[1] is B8. That is what the tool
+        # description documents ("B[0] for current row references") and it is
+        # the only reading under which the syntax means anything: resolving
+        # B[n] against the table's first data row — as this did previously —
+        # makes it an exact duplicate of the T1.B[n] form handled above.
+        #
+        # The practical consequence of the old behaviour was that every data
+        # row of a computed column produced the SAME formula: `=B[0]*C[0]`
+        # written down a table resolved to `=B4*C4` on every row, so running
+        # totals, per-row products and growth rates were all silently wrong.
+        # Point at a fixed cell with T1.B[n]; point at the current row with B[n].
 
         # Row-relative range e.g. B[0]:E[0] (BEFORE single-cell relative)
         range_pattern = r'([A-Z]+)\[([+-]?\d+)\]:([A-Z]+)\[([+-]?\d+)\]'
@@ -463,12 +624,8 @@ def adjust_formula_references(
             start_offset = int(match.group(2))
             end_col = match.group(3)
             end_offset = int(match.group(4))
-            if current_table_start is not None:
-                start_row = current_table_start + 1 + start_offset
-                end_row = current_table_start + 1 + end_offset
-            else:
-                start_row = current_excel_row + start_offset
-                end_row = current_excel_row + end_offset
+            start_row = current_excel_row + start_offset
+            end_row = current_excel_row + end_offset
             return f"{start_col}{start_row}:{end_col}{end_row}"
 
         adjusted = re.sub(range_pattern, replace_range, adjusted)
@@ -479,11 +636,7 @@ def adjust_formula_references(
         def replace_rel(match):
             column = match.group(1)
             offset = int(match.group(2))
-            if current_table_start is not None:
-                actual_row = current_table_start + 1 + offset
-            else:
-                actual_row = current_excel_row + offset
-            result = f"{column}{actual_row}"
+            result = f"{column}{current_excel_row + offset}"
             logger.debug("  Relative ref: %s → %s", match.group(0), result)
             return result
 
@@ -514,14 +667,66 @@ _CURRENCY_FORMATS = {
 }
 
 
+# Type keywords that legitimately start a new column spec. Used by
+# _parse_types_directive to tell a real column boundary from a comma that
+# lives inside an Excel number format (e.g. the ',' in number:#,##0).
+_KNOWN_TYPE_KEYWORDS = frozenset(
+    {"text", "bool", "currency", "number", "date", "percent"}
+)
+
+
 def _parse_types_directive(value: str) -> list[str | None]:
     """Parse a types directive value like 'text, currency:$, date, bool, number'.
 
     Returns a list of type specs (or None for unspecified columns).
+
+    Commas separate columns, but Excel number formats themselves contain
+    commas (``#,##0``), so a naive ``split(',')`` shreds a literal format like
+    ``number:#,##0.00`` into ``number:#`` + ``##0.00`` and shifts every later
+    column by one — silent data corruption with no error. We split on commas
+    but re-join any fragment that does NOT start a new column spec back onto
+    the previous one. A new column spec is either empty (unspecified column)
+    or begins with a known type keyword; anything else is a continuation of
+    the preceding fragment's format string.
     """
     if not value:
         return []
-    return [t.strip() or None for t in value.split(',')]
+    specs: list[str | None] = []
+    for frag in value.split(','):
+        stripped = frag.strip()
+        token = stripped.split(':', 1)[0].strip().lower()
+        is_new_spec = (stripped == "") or (token in _KNOWN_TYPE_KEYWORDS)
+        if is_new_spec or not specs:
+            specs.append(stripped or None)
+        else:
+            # Continuation of a literal format that contained a comma —
+            # re-join with the comma that split() consumed.
+            prev = specs[-1] or ""
+            specs[-1] = f"{prev},{frag}".strip() or None
+    return specs
+
+
+def _strip_thousands_separators(text: str) -> str:
+    """Normalise a numeric string that may carry thousands/decimal separators.
+
+    Handles English (``1,234.56``), European (``1.234,56``) and bare thousands
+    (``1,234``). Returns a string suitable for ``float()``; input that isn't
+    numeric is returned unchanged so the caller's ``float()`` still raises.
+
+    The ambiguous case is a lone comma: ``1,234`` is read as thousands (exactly
+    three trailing digits), ``1,5`` as a European decimal.
+    """
+    text = text.strip()
+    if ',' not in text:
+        return text
+    if '.' in text:
+        # Both separators present — the LAST one is the decimal separator.
+        if text.rfind(',') > text.rfind('.'):
+            return text.replace('.', '').replace(',', '.')  # European 1.234,56
+        return text.replace(',', '')                        # English  1,234.56
+    if len(text.rsplit(',', 1)[-1]) == 3:
+        return text.replace(',', '')     # thousands: 1,234
+    return text.replace(',', '.')        # European decimal: 1,5
 
 
 def _apply_column_type(cell, raw_text: str, type_spec: str | None) -> bool:
@@ -557,28 +762,18 @@ def _apply_column_type(cell, raw_text: str, type_spec: str | None) -> bool:
         symbol = type_spec.split(':', 1)[1].strip() if ':' in type_spec else '$'
         if not symbol:
             symbol = '$'  # Default if directive is 'currency:' with no symbol
-        # Strip the currency symbol and common thousand separators
+        # Strip the currency symbol and any spacing around the number.
         numeric_str = clean.replace(symbol, '').replace(' ', '').strip()
-        # Handle both comma-as-thousands (1,234.56) and dot-as-thousands (1.234,56)
-        if ',' in numeric_str and '.' in numeric_str:
-            # Determine which is the decimal separator (last one wins)
-            last_comma = numeric_str.rfind(',')
-            last_dot = numeric_str.rfind('.')
-            if last_comma > last_dot:
-                # European: 1.234,56
-                numeric_str = numeric_str.replace('.', '').replace(',', '.')
-            else:
-                # English: 1,234.56
-                numeric_str = numeric_str.replace(',', '')
-        elif ',' in numeric_str and '.' not in numeric_str:
-            # Could be thousands (1,234) or decimal (1,5) — assume thousands if >3 digits after comma
-            parts = numeric_str.split(',')
-            if len(parts[-1]) == 3:
-                numeric_str = numeric_str.replace(',', '')
-            else:
-                numeric_str = numeric_str.replace(',', '.')
+        # Accounting-style negatives wrap the amount in parentheses:
+        # ($1,234) means -1234. Strip them and negate after parsing —
+        # float('(1234)') raises, so without this the cell stayed text.
+        is_negative = numeric_str.startswith('(') and numeric_str.endswith(')')
+        if is_negative:
+            numeric_str = numeric_str[1:-1]
+        numeric_str = _strip_thousands_separators(numeric_str)
         try:
-            cell.value = float(numeric_str)
+            value = float(numeric_str)
+            cell.value = -abs(value) if is_negative else value
             cell.number_format = _CURRENCY_FORMATS.get(symbol, f'#,##0.00 "{symbol}"')
         except ValueError:
             cell.value = clean  # Can't parse → keep as text
@@ -587,13 +782,16 @@ def _apply_column_type(cell, raw_text: str, type_spec: str | None) -> bool:
     # number or number:<format> — parse as number with optional format
     if type_lower.startswith('number'):
         fmt = type_spec.split(':', 1)[1].strip() if ':' in type_spec else None
-        numeric_str = clean.replace(',', '').replace(' ', '')
+        # Was `clean.replace(',', '')`, which turned the European decimal
+        # '1,5' into 15 — a silent 10x error. _strip_thousands_separators
+        # distinguishes a thousands comma from a decimal comma.
+        numeric_str = _strip_thousands_separators(clean.replace(' ', ''))
         try:
             cell.value = float(numeric_str)
             if fmt:
                 cell.number_format = fmt
-            elif cell.value >= 1000:
-                cell.number_format = '#,##0'
+            elif abs(cell.value) >= _THOUSANDS_THRESHOLD:
+                cell.number_format = _thousands_format_for(cell.value)
         except ValueError:
             cell.value = clean
         return True
@@ -615,12 +813,115 @@ def _apply_column_type(cell, raw_text: str, type_spec: str | None) -> bool:
         numeric_str = clean.rstrip('%').strip()
         try:
             cell.value = float(numeric_str) / 100
-            cell.number_format = '0%'
+            cell.number_format = _percent_format_for(numeric_str)
         except ValueError:
             cell.value = clean
         return True
 
     return False
+
+
+def _number_format_for_type(type_spec: str | None) -> str | None:
+    """Return the Excel number format a column ``types`` spec implies, or None.
+
+    Used to format a *formula* cell sitting in a typed column. Formula cells
+    bypass :func:`_apply_column_type` — their value is a formula to resolve,
+    not a literal to coerce — so without this they lose the column's intended
+    format and a ``=SUM(...)`` in a ``currency:$`` column renders as a bare
+    number.
+
+    Mirrors the format selection in :func:`_apply_column_type` without
+    touching the cell value. Returns None for types with no numeric format
+    (``text``/``bool``), for unknown specs, and for the bare ``number``/``date``
+    forms whose format is chosen from the parsed value (which a formula
+    doesn't have until Excel evaluates it).
+    """
+    if not type_spec:
+        return None
+    type_lower = type_spec.lower()
+
+    if type_lower.startswith('currency'):
+        symbol = type_spec.split(':', 1)[1].strip() if ':' in type_spec else '$'
+        if not symbol:
+            symbol = '$'
+        return _CURRENCY_FORMATS.get(symbol, f'#,##0.00 "{symbol}"')
+
+    if type_lower == 'percent':
+        return '0%'
+
+    if type_lower.startswith(('number', 'date')):
+        # Only an explicit format applies; the bare form is value-derived.
+        if ':' not in type_spec:
+            return None
+        return type_spec.split(':', 1)[1].strip() or None
+
+    return None
+
+
+# ── Workbook limits ───────────────────────────────────────────────────────────
+
+# Excel rejects a formula longer than 8192 characters, and rejects the whole
+# FILE rather than the one cell: the workbook opens to a repair prompt.
+MAX_FORMULA_LENGTH = 8192
+
+
+def _write_formula(cell, formula: str, coordinate: str) -> None:
+    """Write a resolved formula, degrading to text if Excel would reject it.
+
+    A single over-length formula makes Excel refuse the entire workbook, so
+    the cell is stored as an inline string instead: one visibly wrong cell in
+    a file that opens beats a file that doesn't.
+    """
+    cell.value = formula
+    if len(formula) > MAX_FORMULA_LENGTH:
+        cell.data_type = 's'  # inline string, not <f>
+        logger.warning(
+            "Formula in %s is %d characters, over Excel's %d limit; stored as "
+            "text so the workbook still opens. Split it across helper columns.",
+            coordinate, len(formula), MAX_FORMULA_LENGTH,
+        )
+
+
+def _ensure_unique_table_headers(worksheet, header_row: int, num_cols: int) -> None:
+    """Make a header row usable as an Excel Table header.
+
+    Excel requires every column name in a Table to be non-empty and unique
+    (compared case-insensitively). openpyxl copies the names straight from the
+    header cells without validating, so a duplicate or blank heading — two
+    ``Q1`` columns, say — produces a file Excel opens with "we found a problem
+    with some content". Blank headings get a positional name and duplicates a
+    numeric suffix; both are logged, since the rename is visible to the user.
+
+    Only called when ``auto_filter`` builds a Table; a plain table's headers
+    are left exactly as written.
+    """
+    seen: set[str] = set()
+    for col_idx in range(1, num_cols + 1):
+        cell = worksheet.cell(row=header_row, column=col_idx)
+        original = str(cell.value).strip() if cell.value is not None else ""
+
+        # The positional fallback for a blank heading is just a candidate name
+        # like any other: it has to clear the uniqueness check too. Exempting
+        # it — as an earlier version did — reintroduced the exact duplicate
+        # this function exists to prevent, whenever a real column happened to
+        # be named "ColumnN" and column N was blank.
+        name = original or f"Column{col_idx}"
+        if name.casefold() in seen:
+            base, suffix = name, 2
+            while f"{base}_{suffix}".casefold() in seen:
+                suffix += 1
+            name = f"{base}_{suffix}"
+
+        seen.add(name.casefold())
+        if name != original:
+            logger.warning(
+                "Table header %s (%s) can't be used as an Excel Table column "
+                "name — they must be non-empty and unique — using '%s'.",
+                cell.coordinate,
+                f"'{original}'" if original else "empty",
+                name,
+            )
+            cell.value = name
 
 
 # ── Table Rendering ───────────────────────────────────────────────────────────
@@ -667,7 +968,14 @@ def add_table_to_sheet(
                 if row_idx > 0 and col_type:
                     # Strip markdown formatting before type coercion
                     clean_text, fmt_info = _strip_markdown_formatting(cell_text)
-                    if _apply_column_type(cell, clean_text, col_type):
+                    # A formula cell must NOT go through type coercion: its
+                    # references still need resolving by
+                    # adjust_formula_references, and float('=SUM(B[0]:B[2])')
+                    # raises — leaving the unresolved literal in the cell,
+                    # which Excel shows as #NAME?. Fall through to the formula
+                    # path below, which re-applies the column's number format.
+                    is_formula = clean_text.startswith('=')
+                    if not is_formula and _apply_column_type(cell, clean_text, col_type):
                         # Type directive handled the cell value — apply formatting, border, alignment
                         apply_cell_formatting(cell, fmt_info)
                         cell.border = border
@@ -688,8 +996,17 @@ def add_table_to_sheet(
                     adjusted_formula = adjust_formula_references(
                         resolved.value, current_excel_row, table_positions, all_sheet_table_positions
                     )
-                    cell.value = adjusted_formula
+                    _write_formula(cell, adjusted_formula, cell.coordinate)
                     cell.fill = formula_fill
+                    # A formula in a typed column takes the column's intended
+                    # number format for its (numeric) result — e.g. a =SUM(...)
+                    # in a `currency:$` column displays as currency. Harmless
+                    # on non-numeric results: Excel ignores number formats on
+                    # strings and errors.
+                    if row_idx > 0 and col_type:
+                        type_fmt = _number_format_for_type(col_type)
+                        if type_fmt:
+                            cell.number_format = type_fmt
                 else:
                     # Header row must remain as strings — Excel Tables require
                     # string headers; numeric-looking headers (e.g. "2024") must
@@ -724,12 +1041,14 @@ def add_table_to_sheet(
                 if row_idx == 0:
                     cell.font = header_font
                     cell.fill = header_fill
-                elif isinstance(cell.value, (int, float)) and cell.value >= 1000:
-                    cell.number_format = '#,##0'
+                elif isinstance(cell.value, (int, float)) and abs(cell.value) >= _THOUSANDS_THRESHOLD:
+                    # abs() so that -5000 is grouped like 5000; the old
+                    # `>= 1000` test left every negative value unformatted.
+                    cell.number_format = _thousands_format_for(cell.value)
 
-                # Apply percentage number format
+                # Apply percentage number format, at the source text's precision
                 if resolved.is_percent and isinstance(cell.value, (int, float)):
-                    cell.number_format = '0%'
+                    cell.number_format = resolved.percent_format or '0%'
 
                 # Apply date number format
                 if resolved.is_date and resolved.date_format:
@@ -746,8 +1065,14 @@ def add_table_to_sheet(
         max_length = 0
         for row_idx, row in enumerate(table_data):
             if col_idx < len(row):
-                # For data rows with a type directive, estimate from the directive
-                if row_idx > 0 and col_type:
+                # For data rows with a type directive, estimate from the directive.
+                # Formula cells are the exception — Excel renders them as the
+                # result, so their source length says nothing about display
+                # width (and would blow the column out to MAX_COLUMN_WIDTH).
+                # Uses the same formula test as the rendering loop above rather
+                # than a second, cruder one.
+                cell_is_formula = _strip_markdown_formatting(row[col_idx])[0].startswith('=')
+                if row_idx > 0 and col_type and not cell_is_formula:
                     type_lower = col_type.lower()
                     if type_lower == 'bool':
                         length = 5  # "FALSE" is longest
@@ -777,6 +1102,10 @@ def add_table_to_sheet(
     if auto_filter:
         num_cols = len(table_data[0]) if table_data else 0
         if num_cols > 0:
+            # Must run before the Table is built: openpyxl reads the column
+            # names off these cells, and a blank or duplicate one yields a
+            # workbook Excel refuses to open.
+            _ensure_unique_table_headers(worksheet, start_row, num_cols)
             last_col_letter = get_column_letter(num_cols)
             last_data_row = start_row + len(table_data) - 1
             table_ref = f"A{start_row}:{last_col_letter}{last_data_row}"

@@ -399,10 +399,16 @@ class TestToolSignatureDefaults:
 
     @staticmethod
     def _get_main_py_source():
-        """Read main.py source code."""
+        """Read main.py source code.
+
+        The encoding is explicit because main.py carries non-ASCII characters
+        in the tool descriptions (currency symbols: €, £, Kč, zł, ₹). Without
+        it, read_text() uses the platform default — cp1252 on Windows — and
+        raises UnicodeDecodeError before any assertion runs.
+        """
         from pathlib import Path
         main_py = Path(__file__).parent.parent / "main.py"
-        return main_py.read_text()
+        return main_py.read_text(encoding="utf-8")
 
     def test_create_excel_document_signature_defaults_to_none(self):
         """Verify create_excel_document's add_unique_prefix defaults to None (not False).
