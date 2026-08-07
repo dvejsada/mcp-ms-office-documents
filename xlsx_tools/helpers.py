@@ -1,3 +1,4 @@
+import math
 import re
 import logging
 from dataclasses import dataclass
@@ -318,12 +319,19 @@ def resolve_cell(raw_text: str) -> CellResult:
     # when the grouping is unambiguous — see _normalize_grouped_number.
     try:
         numeric_val = float(_normalize_grouped_number(clean_text))
-        return CellResult(
-            value=numeric_val,
-            bold=bold, italic=italic, monospace=monospace,
-        )
     except ValueError:
         pass
+    else:
+        # float() also accepts Python literals that are not spreadsheet
+        # numbers. 'nan'/'inf'/'-Infinity' have no XLSX representation —
+        # openpyxl writes them as an empty <v>, so the cell silently arrives
+        # BLANK — and PEP 515 underscores mean a product code like '1_000'
+        # would quietly become 1000. Both belong in the text branch.
+        if math.isfinite(numeric_val) and '_' not in clean_text:
+            return CellResult(
+                value=numeric_val,
+                bold=bold, italic=italic, monospace=monospace,
+            )
 
     # Step 5: Try date detection (after numeric, so "2024" isn't parsed as a date)
     date_result = _try_parse_date(clean_text)
@@ -342,22 +350,38 @@ def resolve_cell(raw_text: str) -> CellResult:
 
 
 def apply_cell_formatting(cell, formatting_info: dict[str, bool]) -> None:
-    """Apply formatting information to an Excel cell."""
+    """Apply inline markdown formatting (bold/italic/code) to an Excel cell.
+
+    openpyxl fonts are immutable, so each branch builds a replacement rather
+    than mutating. The current font's family is carried over — dropping it
+    silently reset the cell to the workbook default, which is invisible today
+    (everything is Calibri) but would quietly undo any per-cell or
+    workbook-wide font choice layered underneath.
+    """
     current_font = cell.font
     if formatting_info['bold']:
-        cell.font = Font(bold=True, color=current_font.color, size=current_font.size)
+        cell.font = Font(name=current_font.name, bold=True,
+                         color=current_font.color, size=current_font.size)
     elif formatting_info['italic']:
-        cell.font = Font(italic=True, color=current_font.color, size=current_font.size)
+        cell.font = Font(name=current_font.name, italic=True,
+                         color=current_font.color, size=current_font.size)
     elif formatting_info['monospace']:
-        cell.font = Font(name='Courier New', color=current_font.color, size=current_font.size)
+        cell.font = Font(name='Courier New',
+                         color=current_font.color, size=current_font.size)
 
 
 # ── Formula Reference Resolution ─────────────────────────────────────────────
 
 def _quote_sheet_name(name: str) -> str:
-    """Return the sheet name quoted for Excel if it contains spaces or special chars."""
+    """Return the sheet name quoted for Excel if it contains spaces or special chars.
+
+    An apostrophe inside the name is doubled, which is how Excel escapes it
+    within a quoted sheet reference. Without that, a sheet called ``John's
+    Data`` produced ``'John's Data'!B2`` — the quoted section ends at the
+    apostrophe and the rest is garbage, so the whole formula is invalid.
+    """
     if re.search(r"[^A-Za-z0-9_]", name):
-        return f"'{name}'"
+        return "'{}'".format(name.replace("'", "''"))
     return name
 
 
@@ -410,6 +434,26 @@ def _warn_unknown_sheet(sheet: str, all_sheet_table_positions: dict[str, dict[st
         )
 
 
+# A sheet name inside a cross-sheet reference: either the quoted Excel form or
+# a bare name. Quoting is what makes a name containing an operator character
+# unambiguous — `=A1-P&L!T1.B[0]` cannot be parsed, `=A1-'P&L'!T1.B[0]` can —
+# and it is the form Excel itself writes. Doubled apostrophes inside a quoted
+# name are an escaped apostrophe.
+#
+# Deliberately a single capturing group: the three cross-sheet patterns below
+# index their groups positionally, so an alternation with two groups would
+# shift every later index.
+_SHEET_NAME_PATTERN = r"((?:'[^']*(?:''[^']*)*')|[\w\s.]+)"
+
+
+def _unquote_sheet_name(raw: str) -> str:
+    """Normalise a matched sheet name, stripping Excel quoting if present."""
+    raw = raw.strip()
+    if len(raw) >= 2 and raw.startswith("'") and raw.endswith("'"):
+        return raw[1:-1].replace("''", "'")
+    return raw
+
+
 def _make_cell_ref(column: str, row: int, sheet: str | None = None) -> str:
     """Build a cell reference string, optionally with a quoted sheet prefix."""
     if sheet:
@@ -441,10 +485,10 @@ def adjust_formula_references(
         # ── Cross-sheet references (must be resolved BEFORE local patterns) ──
 
         # Cross-sheet function: SheetName!T1.SUM(B[0]:E[0])
-        cs_func_pattern = r"([\w\s.]+)!T(\d+)\.(SUM|AVERAGE|MAX|MIN)\(([A-Z]+)\[([+-]?\d+)\]:([A-Z]+)\[([+-]?\d+)\]\)"
+        cs_func_pattern = _SHEET_NAME_PATTERN + r"!T(\d+)\.(SUM|AVERAGE|MAX|MIN)\(([A-Z]+)\[([+-]?\d+)\]:([A-Z]+)\[([+-]?\d+)\]\)"
 
         def _replace_cs_func(match):
-            sheet = match.group(1).strip()
+            sheet = _unquote_sheet_name(match.group(1))
             table_num = int(match.group(2))
             func_name = match.group(3)
             start_col = match.group(4)
@@ -469,10 +513,10 @@ def adjust_formula_references(
         formula = re.sub(cs_func_pattern, _replace_cs_func, formula)
 
         # Cross-sheet range: SheetName!T1.B[0]:T1.E[0]
-        cs_range_pattern = r"([\w\s.]+)!T(\d+)\.([A-Z]+)\[([+-]?\d+)\]:T(\d+)\.([A-Z]+)\[([+-]?\d+)\]"
+        cs_range_pattern = _SHEET_NAME_PATTERN + r"!T(\d+)\.([A-Z]+)\[([+-]?\d+)\]:T(\d+)\.([A-Z]+)\[([+-]?\d+)\]"
 
         def _replace_cs_range(match):
-            sheet = match.group(1).strip()
+            sheet = _unquote_sheet_name(match.group(1))
             st_num = int(match.group(2))
             start_col = match.group(3)
             start_offset = int(match.group(4))
@@ -491,10 +535,10 @@ def adjust_formula_references(
         formula = re.sub(cs_range_pattern, _replace_cs_range, formula)
 
         # Cross-sheet single cell: SheetName!T1.B[0]
-        cs_cell_pattern = r"([\w\s.]+)!T(\d+)\.([A-Z]+)\[([+-]?\d+)\]"
+        cs_cell_pattern = _SHEET_NAME_PATTERN + r"!T(\d+)\.([A-Z]+)\[([+-]?\d+)\]"
 
         def _replace_cs_cell(match):
-            sheet = match.group(1).strip()
+            sheet = _unquote_sheet_name(match.group(1))
             table_num = int(match.group(2))
             column = match.group(3)
             offset = int(match.group(4))
@@ -814,6 +858,71 @@ def _number_format_for_type(type_spec: str | None) -> str | None:
     return None
 
 
+# ── Workbook limits ───────────────────────────────────────────────────────────
+
+# Excel rejects a formula longer than 8192 characters, and rejects the whole
+# FILE rather than the one cell: the workbook opens to a repair prompt.
+MAX_FORMULA_LENGTH = 8192
+
+
+def _write_formula(cell, formula: str, coordinate: str) -> None:
+    """Write a resolved formula, degrading to text if Excel would reject it.
+
+    A single over-length formula makes Excel refuse the entire workbook, so
+    the cell is stored as an inline string instead: one visibly wrong cell in
+    a file that opens beats a file that doesn't.
+    """
+    cell.value = formula
+    if len(formula) > MAX_FORMULA_LENGTH:
+        cell.data_type = 's'  # inline string, not <f>
+        logger.warning(
+            "Formula in %s is %d characters, over Excel's %d limit; stored as "
+            "text so the workbook still opens. Split it across helper columns.",
+            coordinate, len(formula), MAX_FORMULA_LENGTH,
+        )
+
+
+def _ensure_unique_table_headers(worksheet, header_row: int, num_cols: int) -> None:
+    """Make a header row usable as an Excel Table header.
+
+    Excel requires every column name in a Table to be non-empty and unique
+    (compared case-insensitively). openpyxl copies the names straight from the
+    header cells without validating, so a duplicate or blank heading — two
+    ``Q1`` columns, say — produces a file Excel opens with "we found a problem
+    with some content". Blank headings get a positional name and duplicates a
+    numeric suffix; both are logged, since the rename is visible to the user.
+
+    Only called when ``auto_filter`` builds a Table; a plain table's headers
+    are left exactly as written.
+    """
+    seen: set[str] = set()
+    for col_idx in range(1, num_cols + 1):
+        cell = worksheet.cell(row=header_row, column=col_idx)
+        name = str(cell.value).strip() if cell.value is not None else ""
+
+        if not name:
+            name = f"Column{col_idx}"
+            logger.warning(
+                "Table header %s is empty; Excel Tables require a name for "
+                "every column — using '%s'.",
+                cell.coordinate, name,
+            )
+        elif name.casefold() in seen:
+            original, suffix = name, 2
+            while f"{original}_{suffix}".casefold() in seen:
+                suffix += 1
+            name = f"{original}_{suffix}"
+            logger.warning(
+                "Duplicate table header '%s' at %s; Excel Tables require "
+                "unique column names — renamed to '%s'.",
+                original, cell.coordinate, name,
+            )
+
+        seen.add(name.casefold())
+        if cell.value != name:
+            cell.value = name
+
+
 # ── Table Rendering ───────────────────────────────────────────────────────────
 
 def add_table_to_sheet(
@@ -886,7 +995,7 @@ def add_table_to_sheet(
                     adjusted_formula = adjust_formula_references(
                         resolved.value, current_excel_row, table_positions, all_sheet_table_positions
                     )
-                    cell.value = adjusted_formula
+                    _write_formula(cell, adjusted_formula, cell.coordinate)
                     cell.fill = formula_fill
                     # A formula in a typed column takes the column's intended
                     # number format for its (numeric) result — e.g. a =SUM(...)
@@ -989,6 +1098,10 @@ def add_table_to_sheet(
     if auto_filter:
         num_cols = len(table_data[0]) if table_data else 0
         if num_cols > 0:
+            # Must run before the Table is built: openpyxl reads the column
+            # names off these cells, and a blank or duplicate one yields a
+            # workbook Excel refuses to open.
+            _ensure_unique_table_headers(worksheet, start_row, num_cols)
             last_col_letter = get_column_letter(num_cols)
             last_data_row = start_row + len(table_data) - 1
             table_ref = f"A{start_row}:{last_col_letter}{last_data_row}"
