@@ -25,7 +25,9 @@ import logging
 import re
 from dataclasses import dataclass, field
 
-from openpyxl.styles import Font, PatternFill
+from copy import copy
+
+from openpyxl.styles import Alignment, Border, Font, PatternFill
 
 logger = logging.getLogger(__name__)
 
@@ -294,14 +296,46 @@ def parse_styles_directive(
     return styles
 
 
+def _apply_named_style(cell, style_name: str) -> None:
+    """Apply a named style without discarding what it has no opinion about.
+
+    An openpyxl ``NamedStyle`` bundles font, fill, border, alignment *and*
+    number format, and ``cell.style = name`` replaces all five at once. Left
+    alone that silently undoes the table renderer's work: a totals row given
+    ``style:Total`` in a ``currency:$`` column loses ``$#,##0.00``, its
+    borders and its alignment, because a style defining only a font resets
+    those three to their defaults.
+
+    Blanket-restoring all three would be wrong in the other direction — a
+    template style that deliberately declares ``0.00%`` must still apply it.
+    So each property is restored only where the style left it at its default,
+    which is precisely the case where the style expresses no preference. The
+    defaults are read off the cell after application, since at that point the
+    cell's value *is* the style's value.
+    """
+    previous_number_format = cell.number_format
+    previous_border = copy(cell.border)
+    previous_alignment = copy(cell.alignment)
+
+    cell.style = style_name
+
+    if cell.number_format == 'General':
+        cell.number_format = previous_number_format
+    if cell.border == Border():
+        cell.border = previous_border
+    if cell.alignment == Alignment():
+        cell.alignment = previous_alignment
+
+
 def apply_style_spec(cell, spec: StyleSpec, available_styles: set[str] | None = None) -> None:
     """Apply a :class:`StyleSpec` to a cell.
 
-    A named style is applied first and replaces the cell's whole format, so
-    inline attributes are layered on afterwards and win — ``style:Total;bg:yellow``
-    reads as "the Total style, but highlighted". Attributes the spec doesn't
-    mention are left as they are, which keeps number formats, borders and
-    alignment from the table renderer intact.
+    A named style is applied first, then inline attributes layer on top and
+    win — ``style:Total;bg:yellow`` reads as "the Total style, but
+    highlighted". Attributes the spec doesn't mention are left alone, so the
+    number format, border and alignment the table renderer set survive (see
+    :func:`_apply_named_style` for the one case where a style overrides them
+    on purpose).
     """
     if spec.named_style:
         if available_styles is not None and spec.named_style not in available_styles:
@@ -313,7 +347,7 @@ def apply_style_spec(cell, spec: StyleSpec, available_styles: set[str] | None = 
             )
         else:
             try:
-                cell.style = spec.named_style
+                _apply_named_style(cell, spec.named_style)
             except Exception as e:
                 logger.warning("Could not apply named style '%s': %s", spec.named_style, e)
 

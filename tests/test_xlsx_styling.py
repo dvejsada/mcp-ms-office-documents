@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 from openpyxl import Workbook, load_workbook
-from openpyxl.styles import Font, NamedStyle, PatternFill
+from openpyxl.styles import Alignment, Font, NamedStyle, PatternFill
 
 from xlsx_tools import markdown_to_excel
 from xlsx_tools.styles import (
@@ -359,3 +359,88 @@ class TestTemplateNamedStyles:
 
     def test_empty_template_styles_register_cleanly(self):
         assert TemplateStyles().register_into(Workbook()) == set()
+
+
+class TestNamedStyleDoesNotClobberCellFormat:
+    """A NamedStyle bundles number format, border and alignment with the font.
+
+    `cell.style = name` replaces all five at once, so a style that only
+    declares a font would otherwise reset the other three to their defaults —
+    silently undoing the table renderer's work.
+    """
+
+    @staticmethod
+    def _template_with(styles: dict) -> bytes:
+        wb = Workbook()
+        for name, configure in styles.items():
+            ns = NamedStyle(name=name)
+            ns.font = Font(bold=True, color="FFFFFF")
+            configure(ns)
+            wb.add_named_style(ns)
+        buf = io.BytesIO()
+        wb.save(buf)
+        return buf.getvalue()
+
+    def _with_template(self, tmp_path, styles):
+        path = tmp_path / "custom_xlsx_template.xlsx"
+        path.write_bytes(self._template_with(styles))
+        return patch("template_utils.find_file_in_template_dirs", return_value=path)
+
+    def test_font_only_style_preserves_number_format(self, tmp_path):
+        """A totals row given style:Total in a currency column kept $#,##0.00."""
+        with self._with_template(tmp_path, {"Total": lambda ns: None}):
+            ws = _workbook(
+                "<!-- types: text, currency:$ -->\n"
+                "<!-- styles: B2=style:Total -->\n"
+                "| Item | Value |\n|------|-------|\n| A | $1,500 |\n"
+            ).active
+        assert ws["B2"].value == pytest.approx(1500.0)
+        assert ws["B2"].number_format == "$#,##0.00"
+        assert ws["B2"].font.bold is True, "the style's font must still apply"
+
+    def test_font_only_style_preserves_border_and_alignment(self, tmp_path):
+        with self._with_template(tmp_path, {"Total": lambda ns: None}):
+            ws = _workbook(
+                "<!-- styles: B2=style:Total -->\n"
+                "| Item | Value |\n|------|-------|\n| A | 1 |\n"
+            ).active
+        assert ws["B2"].border.left.style == "thin", "table border must survive"
+        assert ws["B2"].alignment.horizontal == "right", "alignment must survive"
+
+    def test_style_that_declares_a_format_still_applies_it(self, tmp_path):
+        """The other direction: a deliberate format in the style must win.
+
+        A blanket restore would discard it.
+        """
+        def set_percent(ns):
+            ns.number_format = "0.00%"
+
+        with self._with_template(tmp_path, {"Pct": set_percent}):
+            ws = _workbook(
+                "<!-- types: text, currency:$ -->\n"
+                "<!-- styles: B2=style:Pct -->\n"
+                "| Item | Value |\n|------|-------|\n| A | $1,500 |\n"
+            ).active
+        assert ws["B2"].number_format == "0.00%"
+
+    def test_style_that_declares_alignment_still_applies_it(self, tmp_path):
+        def set_center(ns):
+            ns.alignment = Alignment(horizontal="center")
+
+        with self._with_template(tmp_path, {"Mid": set_center}):
+            ws = _workbook(
+                "<!-- styles: B2=style:Mid -->\n"
+                "| Item | Value |\n|------|-------|\n| A | 1 |\n"
+            ).active
+        assert ws["B2"].alignment.horizontal == "center"
+
+    def test_style_combined_with_inline_attributes(self, tmp_path):
+        with self._with_template(tmp_path, {"Total": lambda ns: None}):
+            ws = _workbook(
+                "<!-- types: text, currency:$ -->\n"
+                "<!-- styles: B2=style:Total;bg:yellow -->\n"
+                "| Item | Value |\n|------|-------|\n| A | $1,500 |\n"
+            ).active
+        assert _rgb(ws["B2"].fill.start_color) == "FFFF00", "inline bg wins"
+        assert ws["B2"].number_format == "$#,##0.00", "format still preserved"
+        assert ws["B2"].font.bold is True

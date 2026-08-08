@@ -426,9 +426,13 @@ Colours are 6-digit hex (`FFFF00` or `#FFFF00`) or a name: `red`, `darkred`,
 | Total | =SUM(T1.B[0]:T1.B[2]) | =SUM(T1.C[0]:T1.C[2]) | =SUM(T1.D[0]:T1.D[2]) |
 ```
 
-Styling overrides the built-in header and formula colouring, and never changes
-a cell's value or number format. An unrecognised colour or malformed entry is
-logged and skipped — it never costs you the document.
+Styling overrides the built-in header and formula colouring and never changes
+a cell's value. The `bg:` / `color:` / `bold` / `italic` / `underline`
+attributes touch nothing else — number format, borders and alignment survive.
+A `style:` reference can also carry a number format, border or alignment if
+the template's style declares one; where it doesn't, the cell keeps what the
+table gave it. An unrecognised colour or malformed entry is logged and skipped
+— it never costs you the document.
 
 **Named styles from your own template.** Drop an `.xlsx` containing named cell
 styles at `custom_templates/custom_xlsx_template.xlsx`; every style in it
