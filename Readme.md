@@ -126,6 +126,8 @@ Clients can send the key in any of these headers:
 
 Leave `API_KEY` empty or unset to allow all requests without authentication.
 
+The health-probe routes (`/healthz`, `/readyz`, `/livez`) are the one exception — they stay reachable without a key so orchestrators can poll them. See **🏥 Performance & Health Probes** below.
+
 </details>
 
 <details>
@@ -243,12 +245,17 @@ The `X-User-Id` and `X-User-Email` headers are automatically populated by LibreC
 <details>
 <summary><strong>🏥 Performance & Health Probes</strong></summary>
 
-The server exposes health-check endpoints that Kubernetes (or any orchestrator) can use for liveness/readiness probes:
+The server exposes health-check endpoints that Kubernetes (or any orchestrator) can use for startup/readiness/liveness probes. Each returns `200` with a short plain-text body:
 
-| Endpoint | Purpose |
-|----------|---------|
-| `GET /health` | Basic liveness check |
-| `GET /readiness` | Readiness check |
+| Endpoint | Probe | Body |
+|----------|-------|------|
+| `GET /healthz` | `startupProbe` — the pod has started | `ok` |
+| `GET /readyz` | `readinessProbe` — the pod can receive traffic | `ready` |
+| `GET /livez` | `livenessProbe` — the event loop is responsive; restart on failure | `alive` |
+
+> **These three routes are not protected by `API_KEY`.** They are registered at the Starlette layer (via FastMCP's `@custom_route`), so they sit outside the MCP middleware stack and deliberately bypass the API-key check described under **🔐 Authentication** above — this lets kubelet poll them without credentials. They expose no data beyond the static strings above.
+
+Use HTTP probes rather than TCP ones: a TCP probe only proves the socket still accepts connections, so a wedged Python process with a bound listener would never be restarted. An HTTP probe forces the application itself to answer.
 
 **Thread-pool offloading:** By default (`RUN_BLOCKING_BY_ASYNCIO_THREAD_ENABLED=true`), all blocking document-generation work is dispatched to a bounded thread pool (`RUN_BLOCKING_MAX_WORKERS` threads, default 4). This keeps the asyncio event loop free to respond to health probes and handle concurrent requests — critical for Kubernetes deployments where blocked probes lead to pod restarts.
 
