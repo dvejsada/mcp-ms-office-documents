@@ -341,6 +341,125 @@ class TestToolHandlerIntegration:
             assert all(c in "0123456789abcdef" for c in prefix), f"Prefix not hex: {prefix}"
 
 
+class TestDynamicTemplateToolDefaults:
+    """Template-driven tools must inherit the strategy-based default too.
+
+    Regression: both dynamic call sites read the flag as
+    ``payload.get("add_unique_prefix", False)``. Since the payload is built
+    solely from the template's declared ``args``, a template that does not
+    declare that arg produced an explicit ``False`` — which satisfies the
+    ``is None`` check in upload_file() and pinned every template upload to
+    "no prefix" on every backend, S3 included. Reading it without a default
+    yields None, so the strategy resolution runs as it does for the static
+    tools in main.py.
+    """
+
+    DOCX_SPEC = {
+        "name": "prefix_probe_docx",
+        "description": "prefix probe",
+        "docx_path": "default_docx_template.docx",
+        "args": [
+            {"name": "req_arg", "type": "string", "required": True, "description": "Required arg"},
+        ],
+    }
+
+    EMAIL_SPEC = {
+        "name": "prefix_probe_email",
+        "description": "prefix probe",
+        "html_path": "default_email_template.html",
+        "args": [
+            {"name": "subject", "type": "string", "required": True, "description": "Subject"},
+        ],
+    }
+
+    @staticmethod
+    def _register(register, spec):
+        """Register *spec* on a throwaway server and return the live tool."""
+        import asyncio
+        from fastmcp import FastMCP
+
+        mcp = FastMCP("prefix-test")
+        assert register(mcp, spec), f"registration failed for {spec['name']}"
+        return asyncio.run(mcp.get_tool(spec["name"]))
+
+    @staticmethod
+    def _call(tool, args):
+        import asyncio
+
+        return asyncio.run(tool.run({"data": args}))
+
+    def test_docx_template_tool_passes_none_not_false(self):
+        """A template without the arg must reach upload_file() with None."""
+        from docx_tools.dynamic_docx_tools import register_docx_template
+
+        tool = self._register(register_docx_template, self.DOCX_SPEC)
+
+        with patch("docx_tools.dynamic_docx_tools.upload_file") as mock_upload:
+            mock_upload.return_value = "http://example.com/result.docx"
+            self._call(tool, {"req_arg": "hello"})
+
+        assert mock_upload.call_args.kwargs["add_unique_prefix"] is None, \
+            "explicit False here defeats the strategy-based default in upload_file()"
+
+    def test_email_template_tool_passes_none_not_false(self):
+        """Same contract for the dynamic email tools."""
+        from email_tools.dynamic_email_tools import register_email_template
+
+        tool = self._register(register_email_template, self.EMAIL_SPEC)
+
+        with patch("email_tools.dynamic_email_tools.upload_file") as mock_upload:
+            mock_upload.return_value = "http://example.com/result.eml"
+            self._call(tool, {"subject": "hello"})
+
+        assert mock_upload.call_args.kwargs["add_unique_prefix"] is None, \
+            "explicit False here defeats the strategy-based default in upload_file()"
+
+    def test_docx_template_tool_gets_uuid_prefix_on_s3(self):
+        """End-to-end: the S3 object key carries the 8-char UUID prefix.
+
+        This is the user-visible symptom the regression produced — template
+        output landing in the bucket under a bare, collision-prone key.
+        """
+        from config import StorageStrategy
+        from docx_tools.dynamic_docx_tools import register_docx_template
+
+        tool = self._register(register_docx_template, self.DOCX_SPEC)
+
+        with patch("upload_tools.main.UPLOAD_STRATEGY", StorageStrategy.S3), \
+             patch("upload_tools.main.upload_to_s3") as mock_upload, \
+             patch("upload_tools.main.cfg") as mock_cfg:
+            mock_upload.return_value = "https://s3.example.com/file.docx"
+            mock_cfg.storage.s3 = MagicMock()
+            self._call(tool, {"req_arg": "hello"})
+
+        object_name = mock_upload.call_args[0][1]
+        assert object_name.endswith("_prefix_probe_docx.docx"), \
+            f"Expected UUID prefix for S3, got: {object_name}"
+        prefix = object_name.split("_")[0]
+        assert len(prefix) == 8, f"Expected 8-char prefix, got: {prefix}"
+        assert all(c in "0123456789abcdef" for c in prefix), f"Prefix not hex: {prefix}"
+
+    def test_template_can_still_opt_out_explicitly(self):
+        """A template that declares the arg keeps full control of the flag."""
+        from docx_tools.dynamic_docx_tools import register_docx_template
+
+        spec = dict(
+            self.DOCX_SPEC,
+            name="prefix_optout_docx",
+            args=self.DOCX_SPEC["args"] + [
+                {"name": "add_unique_prefix", "type": "bool", "required": False,
+                 "default": False, "description": "Opt out of the UUID prefix"},
+            ],
+        )
+        tool = self._register(register_docx_template, spec)
+
+        with patch("docx_tools.dynamic_docx_tools.upload_file") as mock_upload:
+            mock_upload.return_value = "http://example.com/result.docx"
+            self._call(tool, {"req_arg": "hello"})
+
+        assert mock_upload.call_args.kwargs["add_unique_prefix"] is False
+
+
 class TestToolSignatureDefaults:
     """Tests that verify the actual FastMCP tool handler signatures have correct defaults.
     

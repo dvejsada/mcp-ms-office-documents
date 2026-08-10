@@ -756,7 +756,11 @@ def _register_single_template(mcp: FastMCP, spec: Dict[str, Any],
                         buffer,
                         "docx",
                         filename=payload.get("file_name") or _name,
-                        add_unique_prefix=payload.get("add_unique_prefix", False),
+                        # Absent → None, so upload_file() applies the
+                        # strategy-based default (prefix on for LOCAL/S3/GCS/
+                        # AZURE/MINIO, off for LIBRECHAT). Passing False here
+                        # would pin every template upload to "no prefix".
+                        add_unique_prefix=payload.get("add_unique_prefix"),
                     )
                 finally:
                     buffer.close()
