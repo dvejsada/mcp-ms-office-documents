@@ -312,6 +312,17 @@ def _apply_named_style(cell, style_name: str) -> None:
     which is precisely the case where the style expresses no preference. The
     defaults are read off the cell after application, since at that point the
     cell's value *is* the style's value.
+
+    The consequence, which is not solvable rather than merely unsolved: a
+    style that deliberately sets ``number_format='General'`` — a "Plain"
+    style meant to strip an inherited currency format back to a raw number —
+    is treated as having no opinion, so the inherited format wins instead.
+    Reading the ``NamedStyle`` object doesn't help; "unset" and "explicitly
+    General" are the same value there, and openpyxl serialises both to the
+    identical ``<xf numFmtId="0" …/>`` with no ``applyNumberFormat`` flag.
+    The information isn't in the file, so no amount of introspection
+    recovers it. Clearing an inherited format needs an explicit attribute
+    (a future ``format:General``), not a smarter reader.
     """
     previous_number_format = cell.number_format
     previous_border = copy(cell.border)
