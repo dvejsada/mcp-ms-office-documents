@@ -56,7 +56,10 @@ def _reload_main_with_flag(flag_value: str, max_workers: str | None = None):
       - config re-reads the environment,
       - async_runner re-binds get_config and recreates the bounded
         ThreadPoolExecutor with the freshly loaded max_workers,
-      - main re-binds run_blocking to the new async_runner module.
+      - main re-binds run_blocking to the new async_runner module,
+      - librechat_integration (which main imports, and which dispatches the
+        upload half of every static tool) re-binds it too, instead of holding
+        a run_blocking from a previous reload's async_runner.
 
     Returns the freshly imported main module.
     """
@@ -64,7 +67,7 @@ def _reload_main_with_flag(flag_value: str, max_workers: str | None = None):
     os.environ["RUN_BLOCKING_MAX_WORKERS"] = "" if max_workers is None else max_workers
     os.environ.setdefault("UPLOAD_STRATEGY", "LOCAL")
 
-    for mod_name in ("main", "async_runner", "config"):
+    for mod_name in ("main", "librechat_integration", "async_runner", "config"):
         sys.modules.pop(mod_name, None)
 
     # Defensively reset the config singleton before main reads it.
@@ -299,6 +302,67 @@ class TestDynamicToolsUseRunBlocking:
         assert inspect.iscoroutinefunction(docx_rb)
         assert inspect.iscoroutinefunction(email_rb)
         assert main.config.run_blocking_by_asyncio_thread_enabled is expected_mode
+
+
+class TestUploadUsesRunBlocking:
+    """The upload half of a static tool must be offloaded, not just the build.
+
+    The five static tools used to hand the whole job — build *and* upload — to
+    run_blocking. Splitting the buffer build out for LibreChat left
+    upload_and_format_response() calling the synchronous backend inline, so a
+    boto3 upload plus its signed-URL round-trip ran on the event loop: the very
+    stall this module exists to prevent, and one that takes the health probes
+    down with it. These tests pin the dispatch by thread identity rather than
+    by timing, so they cannot go flaky on a loaded CI box.
+    """
+
+    @staticmethod
+    def _thread_running_the_upload(flag: str) -> str:
+        """Return the thread name the storage backend executed on."""
+        import io
+        from unittest.mock import patch
+
+        _reload_main_with_flag(flag)
+
+        from config import StorageStrategy
+        from librechat_integration import upload_and_format_response
+
+        observed: list[str] = []
+
+        def record_backend(file_object, object_name):
+            observed.append(threading.current_thread().name)
+            return f"http://example.com/{object_name}"
+
+        with patch("upload_tools.main.UPLOAD_STRATEGY", StorageStrategy.LOCAL), \
+             patch("upload_tools.main.upload_to_local_folder", record_backend), \
+             patch("librechat_integration.is_librechat_strategy", return_value=False):
+            asyncio.run(
+                upload_and_format_response(
+                    io.BytesIO(b"content"), "docx", "probe",
+                    {"user_id": None}, "created",
+                )
+            )
+
+        assert observed, "storage backend never ran"
+        return observed[0]
+
+    def test_upload_runs_on_worker_thread_when_enabled(self):
+        """Flag on: the blocking backend call leaves the event loop."""
+        thread_name = self._thread_running_the_upload("true")
+
+        assert thread_name.startswith("run_blocking"), (
+            f"upload ran on {thread_name!r}, not a bounded-executor worker. "
+            f"A synchronous S3/GCS/Azure upload on the loop thread freezes "
+            f"every other request, health probes included."
+        )
+
+    def test_upload_runs_inline_when_disabled(self):
+        """Flag off: dispatch follows the same legacy path as the build."""
+        thread_name = self._thread_running_the_upload("false")
+
+        assert not thread_name.startswith("run_blocking"), (
+            f"inline mode must not touch the bounded executor; saw {thread_name!r}"
+        )
 
 
 # ---------------------------------------------------------------------------

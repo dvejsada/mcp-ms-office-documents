@@ -8,8 +8,14 @@ import io
 import logging
 from typing import Optional, Union
 
+from async_runner import run_blocking
 from upload_tools import upload_file_async, is_librechat_strategy
-from upload_tools.backends.librechat import format_file_artifact
+
+# NOTE: upload_tools.backends.librechat is imported lazily inside the LIBRECHAT
+# branch below, not here. It pulls in httpx, and this module is imported by
+# main.py on every startup — an eager import would make an optional backend's
+# dependency mandatory for all strategies. The other backends follow the same
+# rule (see the boto3 comment in upload_tools/backends/s3.py).
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +95,8 @@ async def upload_and_format_response(
         str (URL) for traditional backends, or dict (file artifact) for LIBRECHAT
     """
     if is_librechat_strategy():
+        from upload_tools.backends.librechat import format_file_artifact
+
         # Validate user context for LIBRECHAT
         if not user_context.get("user_id"):
             raise ValueError(
@@ -108,6 +116,23 @@ async def upload_and_format_response(
         # Format as MCP file artifact
         return format_file_artifact(file_info, success_message)
     else:
-        # Traditional upload - returns URL string
+        # Traditional upload - returns URL string.
+        #
+        # upload_file() is synchronous and the backends behind it block: boto3
+        # /GCS/Azure do a network round-trip plus a signed-URL call, LOCAL hits
+        # the disk. Calling it inline here would freeze the event loop for that
+        # whole duration — no other request served, health probes included, the
+        # exact EKS failure mode async_runner.py exists to prevent. Dispatch it
+        # the same way the document build itself is dispatched.
+        #
+        # The dynamic template tools do NOT come through here: they call
+        # upload_file() from inside their own run_blocking'd body, so they are
+        # already off the loop and must not be double-dispatched.
         from upload_tools import upload_file
-        return upload_file(file_buffer, suffix, filename=filename, add_unique_prefix=add_unique_prefix)
+        return await run_blocking(
+            upload_file,
+            file_buffer,
+            suffix,
+            filename=filename,
+            add_unique_prefix=add_unique_prefix,
+        )

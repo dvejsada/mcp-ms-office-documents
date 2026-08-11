@@ -221,7 +221,10 @@ def _register_single_email_template(mcp: FastMCP, spec: Dict[str, Any]) -> bool:
                         buffer,
                         "eml",
                         filename=safe_payload.get("file_name") or safe_payload.get("subject") or _name,
-                        add_unique_prefix=safe_payload.get("add_unique_prefix", False),
+                        # Absent → None, so upload_file() applies the
+                        # strategy-based default rather than pinning every
+                        # template upload to "no prefix". See dynamic_docx_tools.
+                        add_unique_prefix=safe_payload.get("add_unique_prefix"),
                     )
                     metrics.record_call("email", _name)
                     return result
