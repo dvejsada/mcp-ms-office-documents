@@ -1,3 +1,4 @@
+import io
 import logging
 from typing import List, Dict, Any, Optional
 
@@ -5,9 +6,6 @@ from upload_tools import upload_file
 from .slide_builder import PowerpointPresentation
 
 logger = logging.getLogger(__name__)
-
-
-import io
 
 
 def _create_presentation_buffer(
