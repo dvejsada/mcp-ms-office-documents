@@ -401,6 +401,54 @@ would otherwise show a warning dialog and silently resolve those cells to 0.
 |-----------|--------|
 | `<!-- freeze -->` | Freeze panes below the header row (header stays visible when scrolling) |
 | `<!-- types: text, currency:$, date, bool, number, percent -->` | Force per-column data types (one entry per column; blank = auto). Options: `text` (preserves leading zeros), `currency:<symbol>` (`$ € £ ¥ Kč zł kr CHF R$ ₹`), `date` / `date:<format>`, `bool`, `number` / `number:<format>`, `percent` (`50%` → `0.5`) |
+| `<!-- styles: B2=bg:yellow, C[0]:C[3]=color:red;bold -->` | Set cell background and font colour (see below) |
+
+**Cell styling.** Comma-separated `<target>=<attributes>` entries; attributes separated by `;`.
+
+| Target | Meaning |
+|--------|---------|
+| `B2` | Absolute worksheet cell |
+| `B[0]` | Table-relative — first data row of this table; `B[-1]` is the header |
+| `B2:D5`, `C[0]:C[3]` | A rectangular block in either form |
+
+| Attribute | Effect |
+|-----------|--------|
+| `bg:<colour>` | Background fill |
+| `color:<colour>` | Font colour |
+| `bold`, `italic`, `underline` | Font weight and decoration |
+| `style:<Name>` | A named style from your Excel template (see below) |
+
+Colours are 6-digit hex (`FFFF00` or `#FFFF00`) or a name: `red`, `darkred`,
+`orange`, `yellow`, `green`, `darkgreen`, `blue`, `darkblue`, `purple`, `pink`,
+`brown`, `grey`, `lightgrey`, `darkgrey`, `cyan`, `magenta`, `black`, `white`
+(`gray` spellings work too).
+
+```markdown
+<!-- styles: A[-1]:D[-1]=bg:darkblue;color:white;bold, D[3]=bg:yellow;bold -->
+| Month | Sales | Costs | Profit        |
+|-------|-------|-------|---------------|
+| Jan   | 100   | 60    | =B[0]-C[0]    |
+| Feb   | 200   | 90    | =B[0]-C[0]    |
+| Mar   | 300   | 120   | =B[0]-C[0]    |
+| Total | =SUM(T1.B[0]:T1.B[2]) | =SUM(T1.C[0]:T1.C[2]) | =SUM(T1.D[0]:T1.D[2]) |
+```
+
+Styling overrides the built-in header and formula colouring and never changes
+a cell's value. The `bg:` / `color:` / `bold` / `italic` / `underline`
+attributes touch nothing else — number format, borders and alignment survive.
+A `style:` reference can also carry a number format, border or alignment if
+the template's style declares one; where it doesn't, the cell keeps what the
+table gave it. An unrecognised colour or malformed entry is logged and skipped
+— it never costs you the document.
+
+**Named styles from your own template.** Drop an `.xlsx` containing named cell
+styles at `custom_templates/custom_xlsx_template.xlsx`; every style in it
+becomes referenceable as `style:<Name>`. This keeps a house look in one file
+rather than repeating hex codes in every document:
+
+```markdown
+<!-- styles: B[3]=style:Total, C[0]=style:Warning -->
+```
 
 Column alignment via the `:---:` separator syntax is honored, and inline `**bold**` / `*italic*` in cells is applied as cell formatting.
 

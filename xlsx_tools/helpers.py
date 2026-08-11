@@ -935,8 +935,15 @@ def add_table_to_sheet(
     auto_filter: bool = False,
     table_index: int = 0,
     directives: dict[str, str] | None = None,
+    available_styles: set[str] | None = None,
 ) -> int:
-    """Add table data to Excel worksheet with proper formatting and formula support."""
+    """Add table data to Excel worksheet with proper formatting and formula support.
+
+    Args:
+        available_styles: Named styles defined in the workbook, used to
+            validate a ``styles: ... style:Name`` reference. None disables the
+            check (the reference is attempted regardless).
+    """
     if not table_data:
         return start_row
 
@@ -1097,6 +1104,21 @@ def add_table_to_sheet(
                 max_length = max(max_length, length)
         adjusted_width = min(max(max_length + COLUMN_WIDTH_PADDING, MIN_COLUMN_WIDTH), MAX_COLUMN_WIDTH)
         worksheet.column_dimensions[column_letter].width = adjusted_width
+
+    # Explicit cell styling from <!-- styles: B2=bg:yellow, C[0]=style:Total -->.
+    # Applied as a final pass over the finished table, deliberately: it is the
+    # caller's explicit instruction, so it must win over the header fill, the
+    # formula fill and inline **bold**, and a single pass here beats repeating
+    # the lookup in each branch of the cell loop above.
+    styles_directive = directives.get('styles', '')
+    if styles_directive:
+        from .styles import apply_style_spec, parse_styles_directive
+
+        for coordinate, spec in parse_styles_directive(styles_directive, start_row).items():
+            try:
+                apply_style_spec(worksheet[coordinate], spec, available_styles)
+            except Exception as e:
+                logger.warning("Could not style %s: %s", coordinate, e)
 
     # Auto-filter: create a proper Excel Table object (supports multiple per sheet)
     if auto_filter:
