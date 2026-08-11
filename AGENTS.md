@@ -46,7 +46,7 @@ main.py                  ← Registers all MCP tools on a single FastMCP instanc
 - When `True`: adds an 8-character UUID prefix for server-side uniqueness (e.g., `ff8ae81d_My_Report.docx`).
 - When `False`: filenames are clean without UUID prefix (e.g., `My_Report.docx`).
 - **Implementation**: The parameter flows through `upload_file_async()` → `upload_file()` → `generate_named_object_name()` in `upload_tools/`. When the parameter is `None` (not explicitly set), the default is resolved based on the storage strategy.
-- **Dynamic tools**: YAML-defined tools can include `add_unique_prefix` in their payload; the parameter is extracted with `.get("add_unique_prefix", False)` in `dynamic_docx_tools.py` and `dynamic_email_tools.py`. For dynamic tools using traditional backends, consider passing `True` explicitly if filename uniqueness is required.
+- **Dynamic tools**: YAML-defined tools may declare `add_unique_prefix` as an argument. `dynamic_docx_tools.py` and `dynamic_email_tools.py` read it with `.get("add_unique_prefix")` — deliberately **without** a default — so a template that does not declare it yields `None` and inherits the strategy-based default, exactly like the static tools. Do not reintroduce a `False` default there: the payload is built solely from the template's declared args, so `False` would reach `upload_file()` for every template, satisfy its `is None` guard, and silently suppress the prefix on every backend.
 
 ## Adding a New Document Tool
 
