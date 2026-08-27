@@ -177,12 +177,15 @@ _ssrf_config = SSRFConfig()
 
 
 class ImageDownloadError(Exception):
+    """Exception raised when image download fails."""
     pass
 
 class ImageValidationError(Exception):
+    """Exception raised when image validation fails."""
     pass
 
 class SSRFProtectionError(Exception):
+    """Exception raised when SSRF protection blocks a URL."""
     pass
 
 
