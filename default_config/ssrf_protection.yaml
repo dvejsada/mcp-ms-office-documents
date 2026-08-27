@@ -1,0 +1,253 @@
+# SSRF Protection Configuration
+# ==============================
+# This file defines which IP addresses, networks, and hostnames should be blocked
+# when downloading external resources (e.g., images in documents).
+#
+# The configuration is loaded at application startup and can be customized
+# for different deployment environments.
+#
+# Categories are provided for documentation purposes - all entries are merged
+# into the active blocklist regardless of category.
+#
+# Environment variable overrides:
+#   SSRF_ADDITIONAL_BLOCKED_HOSTS: Comma-separated list of additional hostnames to block
+#   SSRF_ADDITIONAL_BLOCKED_NETWORKS: Comma-separated list of additional CIDR networks to block
+#   SSRF_DISABLE_PROTECTION: Set to "true" to disable SSRF protection (NOT RECOMMENDED)
+
+# =============================================================================
+# BLOCKED HOSTNAMES
+# =============================================================================
+# Hostnames are matched case-insensitively.
+# Suffix matching: entries starting with '.' match any subdomain (e.g., '.internal' blocks 'api.internal')
+
+blocked_hostnames:
+
+  # -------------------------------------------------------------------------
+  # Localhost / Loopback
+  # -------------------------------------------------------------------------
+  # These hostnames resolve to the local machine, allowing attackers to
+  # access services running on the same host as the application.
+  localhost:
+    description: "Standard localhost hostname"
+    entries:
+      - localhost
+      - localhost.localdomain
+    
+  loopback_suffixes:
+    description: "Domain suffixes that typically resolve to localhost"
+    entries:
+      - ".localhost"  # Suffix match: anything.localhost
+      - ".local"      # mDNS local network suffix
+
+  # -------------------------------------------------------------------------
+  # Cloud Provider Metadata Services
+  # -------------------------------------------------------------------------
+  # Cloud providers expose instance metadata at well-known endpoints.
+  # Accessing these can leak sensitive information like IAM credentials,
+  # API keys, and instance identity tokens.
+  
+  aws_metadata:
+    description: "AWS Instance Metadata Service (IMDS) - exposes IAM credentials, instance identity"
+    documentation: "https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/instancedata-data-retrieval.html"
+    entries: []
+    # AWS metadata is accessed via IP 169.254.169.254, blocked in networks section
+    
+  gcp_metadata:
+    description: "Google Cloud Platform metadata server - exposes service account tokens"
+    documentation: "https://cloud.google.com/compute/docs/metadata/overview"
+    entries:
+      - metadata.google.internal
+      - metadata.internal
+    
+  azure_metadata:
+    description: "Azure Instance Metadata Service - exposes managed identity tokens"
+    documentation: "https://docs.microsoft.com/en-us/azure/virtual-machines/linux/instance-metadata-service"
+    entries: []
+    # Azure metadata is accessed via IP 169.254.169.254, blocked in networks section
+
+  # -------------------------------------------------------------------------
+  # Container / Orchestration Platforms
+  # -------------------------------------------------------------------------
+  # Container orchestration platforms expose APIs that could be exploited
+  # to access secrets, manipulate workloads, or escalate privileges.
+  
+  kubernetes:
+    description: "Kubernetes API server and internal DNS - could expose cluster secrets"
+    documentation: "https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/"
+    entries:
+      - kubernetes
+      - kubernetes.default
+      - kubernetes.default.svc
+      - kubernetes.default.svc.cluster.local
+    
+  docker:
+    description: "Docker daemon socket and internal networking"
+    documentation: "https://docs.docker.com/engine/security/"
+    entries:
+      - docker
+      - docker.internal
+      - host.docker.internal  # Docker Desktop host access
+      - gateway.docker.internal
+      
+  container_suffixes:
+    description: "Common internal suffixes used by container platforms"
+    entries:
+      - ".internal"  # Generic internal suffix used by many platforms
+      - ".svc"       # Kubernetes service suffix
+      - ".pod"       # Kubernetes pod suffix
+
+# =============================================================================
+# BLOCKED IP NETWORKS
+# =============================================================================
+# Networks are specified in CIDR notation.
+# Both IPv4 and IPv6 are supported.
+
+blocked_networks:
+
+  # -------------------------------------------------------------------------
+  # Loopback Addresses
+  # -------------------------------------------------------------------------
+  # Loopback addresses always refer to the local machine.
+  
+  loopback:
+    description: "Loopback addresses - always refer to the local machine"
+    ipv4:
+      - "127.0.0.0/8"      # Full IPv4 loopback range (127.0.0.1 - 127.255.255.255)
+    ipv6:
+      - "::1/128"          # IPv6 loopback address
+
+  # -------------------------------------------------------------------------
+  # Private Networks (RFC 1918)
+  # -------------------------------------------------------------------------
+  # These IP ranges are reserved for private networks and are not routable
+  # on the public internet. In cloud/corporate environments, these often
+  # host sensitive internal services.
+  
+  private_class_a:
+    description: "RFC 1918 Class A private network - large enterprise/cloud internal networks"
+    documentation: "https://www.rfc-editor.org/rfc/rfc1918"
+    ipv4:
+      - "10.0.0.0/8"       # 10.0.0.0 - 10.255.255.255 (16M addresses)
+      
+  private_class_b:
+    description: "RFC 1918 Class B private network - medium enterprise networks"
+    documentation: "https://www.rfc-editor.org/rfc/rfc1918"
+    ipv4:
+      - "172.16.0.0/12"    # 172.16.0.0 - 172.31.255.255 (1M addresses)
+      
+  private_class_c:
+    description: "RFC 1918 Class C private network - small networks, home routers"
+    documentation: "https://www.rfc-editor.org/rfc/rfc1918"
+    ipv4:
+      - "192.168.0.0/16"   # 192.168.0.0 - 192.168.255.255 (65K addresses)
+
+  # -------------------------------------------------------------------------
+  # Link-Local Addresses (CRITICAL for cloud metadata)
+  # -------------------------------------------------------------------------
+  # The 169.254.0.0/16 range is used for link-local addresses and, critically,
+  # for cloud provider metadata services (169.254.169.254).
+  
+  link_local:
+    description: "Link-local addresses - includes cloud metadata endpoint 169.254.169.254"
+    documentation: "https://www.rfc-editor.org/rfc/rfc3927"
+    critical_note: "MUST block to prevent AWS/GCP/Azure metadata access"
+    ipv4:
+      - "169.254.0.0/16"   # 169.254.0.0 - 169.254.255.255
+    ipv6:
+      - "fe80::/10"        # IPv6 link-local
+
+  # -------------------------------------------------------------------------
+  # Carrier-Grade NAT (RFC 6598)
+  # -------------------------------------------------------------------------
+  # Used by ISPs for large-scale NAT. Should not be accessible from the internet.
+  
+  cgnat:
+    description: "Carrier-Grade NAT - ISP internal network"
+    documentation: "https://www.rfc-editor.org/rfc/rfc6598"
+    ipv4:
+      - "100.64.0.0/10"    # 100.64.0.0 - 100.127.255.255
+
+  # -------------------------------------------------------------------------
+  # Special-Purpose Addresses
+  # -------------------------------------------------------------------------
+  
+  unspecified:
+    description: "Unspecified/default addresses - should never be a valid destination"
+    ipv4:
+      - "0.0.0.0/8"        # 0.0.0.0 - 0.255.255.255
+    ipv6:
+      - "::/128"           # IPv6 unspecified address
+      
+  documentation:
+    description: "Documentation ranges - reserved for examples, should not be routable"
+    documentation: "https://www.rfc-editor.org/rfc/rfc5737"
+    ipv4:
+      - "192.0.2.0/24"     # TEST-NET-1
+      - "198.51.100.0/24"  # TEST-NET-2
+      - "203.0.113.0/24"   # TEST-NET-3
+      
+  ipv6_unique_local:
+    description: "IPv6 Unique Local Addresses - equivalent to RFC 1918 for IPv6"
+    documentation: "https://www.rfc-editor.org/rfc/rfc4193"
+    ipv6:
+      - "fc00::/7"         # Unique local addresses (fc00:: - fdff::)
+
+# =============================================================================
+# DEPLOYMENT ENVIRONMENT PRESETS
+# =============================================================================
+# These presets can be selected via the SSRF_PRESET environment variable.
+# Each preset enables/disables certain categories based on the deployment context.
+
+presets:
+  
+  strict:
+    description: "Maximum security - blocks all internal networks and metadata endpoints"
+    enabled_categories:
+      - localhost
+      - loopback_suffixes
+      - aws_metadata
+      - gcp_metadata
+      - azure_metadata
+      - kubernetes
+      - docker
+      - container_suffixes
+      - loopback
+      - private_class_a
+      - private_class_b
+      - private_class_c
+      - link_local
+      - cgnat
+      - unspecified
+      - documentation
+      - ipv6_unique_local
+      
+  cloud:
+    description: "Cloud deployment - blocks metadata endpoints but allows some internal networking"
+    enabled_categories:
+      - localhost
+      - loopback_suffixes
+      - aws_metadata
+      - gcp_metadata
+      - azure_metadata
+      - kubernetes
+      - docker
+      - container_suffixes
+      - loopback
+      - link_local
+      - unspecified
+      
+  development:
+    description: "Development environment - minimal blocking for local testing"
+    enabled_categories:
+      - aws_metadata
+      - gcp_metadata
+      - azure_metadata
+      - link_local
+      - unspecified
+      
+  disabled:
+    description: "No SSRF protection - USE ONLY FOR TESTING"
+    enabled_categories: []
+
+# Default preset to use if SSRF_PRESET is not set
+default_preset: strict
