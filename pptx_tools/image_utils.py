@@ -2,14 +2,22 @@
 
 This module provides functionality to download and validate images from URLs
 for embedding in PowerPoint slides.
+
+Downloads are restricted to publicly routable addresses (see
+:func:`assert_url_is_public`) so that a caller-supplied image URL cannot be
+used to reach loopback, private-network or cloud-metadata services.
 """
 
 import io
+import ipaddress
 import logging
+import socket
 from typing import Tuple
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import requests
+
+from config import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +38,10 @@ MAX_IMAGE_SIZE = 10 * 1024 * 1024
 # Request timeout in seconds
 REQUEST_TIMEOUT = 30
 
+# Maximum number of HTTP redirects to follow. Every hop is re-validated, so a
+# public URL cannot bounce the request onto an internal address.
+MAX_REDIRECTS = 5
+
 
 class ImageDownloadError(Exception):
     """Exception raised when image download fails."""
@@ -38,6 +50,15 @@ class ImageDownloadError(Exception):
 
 class ImageValidationError(Exception):
     """Exception raised when image validation fails."""
+    pass
+
+
+class SSRFProtectionError(ImageValidationError):
+    """Exception raised when a URL resolves to a non-public address.
+
+    Subclasses :class:`ImageValidationError` so callers that already handle
+    validation failures treat a blocked URL the same way.
+    """
     pass
 
 
@@ -57,6 +78,92 @@ def validate_url(url: str) -> bool:
         return False
 
 
+def _addr_is_public(ip) -> bool:
+    """Return True only for globally routable unicast addresses.
+
+    ``is_global`` already excludes loopback, RFC 1918, link-local (including
+    the 169.254.169.254 cloud-metadata address), CGNAT, documentation and
+    reserved ranges for both IPv4 and IPv6; multicast is rejected separately
+    because ``is_global`` does not cover it.
+    """
+    # Collapse IPv4-mapped IPv6 (::ffff:127.0.0.1) to the IPv4 address it targets.
+    ip = getattr(ip, 'ipv4_mapped', None) or ip
+    return ip.is_global and not (
+        ip.is_private or ip.is_loopback or ip.is_link_local
+        or ip.is_reserved or ip.is_multicast
+    )
+
+
+def assert_url_is_public(url: str) -> None:
+    """Raise unless every address the URL's host resolves to is public.
+
+    Resolution goes through ``getaddrinfo`` for *all* hosts, including bare IP
+    literals, so that alternative encodings (``2130706433``, ``0177.0.0.1``)
+    are normalised the same way the HTTP client will normalise them.
+
+    Known limitation: the hostname is resolved again when the connection is
+    made, so a DNS entry with a very short TTL can answer differently for the
+    two lookups (DNS rebinding). Closing that requires pinning the validated
+    address into the connection; it is not attempted here.
+
+    Args:
+        url: URL to check.
+
+    Raises:
+        SSRFProtectionError: If the host is missing, cannot be resolved, or
+            resolves to a non-public address.
+    """
+    if get_config().allow_private_image_addresses:
+        return
+
+    hostname = urlparse(url).hostname
+    if not hostname:
+        raise SSRFProtectionError(f"URL has no hostname: {url}")
+
+    try:
+        addr_infos = socket.getaddrinfo(hostname, None, type=socket.SOCK_STREAM)
+    except socket.gaierror as e:
+        raise SSRFProtectionError(f"Cannot resolve host '{hostname}': {e}")
+
+    for info in addr_infos:
+        address = ipaddress.ip_address(info[4][0])
+        if not _addr_is_public(address):
+            raise SSRFProtectionError(
+                f"Host '{hostname}' resolves to non-public address {address}"
+            )
+
+
+def _get_following_redirects(url: str) -> requests.Response:
+    """GET *url*, validating the initial URL and every redirect hop.
+
+    Redirects are followed manually because ``requests`` would otherwise
+    follow them without giving us a chance to check where they lead.
+    """
+    assert_url_is_public(url)
+
+    for _ in range(MAX_REDIRECTS + 1):
+        response = requests.get(
+            url,
+            timeout=REQUEST_TIMEOUT,
+            stream=True,
+            allow_redirects=False,
+            headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) PowerPoint-MCP/1.0'
+            }
+        )
+        if not response.is_redirect:
+            response.raise_for_status()
+            return response
+
+        location = response.headers.get('Location')
+        if not location:
+            raise ImageDownloadError(f"Redirect without Location header from {url}")
+        url = urljoin(url, location)
+        assert_url_is_public(url)
+
+    raise ImageDownloadError(f"Too many redirects (>{MAX_REDIRECTS}) downloading image")
+
+
 def download_image(url: str) -> Tuple[io.BytesIO, str]:
     """Download an image from a URL and return it as a BytesIO object.
 
@@ -69,6 +176,8 @@ def download_image(url: str) -> Tuple[io.BytesIO, str]:
     Raises:
         ImageDownloadError: If download fails.
         ImageValidationError: If image validation fails.
+        SSRFProtectionError: If the URL, or any redirect it follows, resolves
+            to a non-public address.
     """
     if not validate_url(url):
         raise ImageValidationError(f"Invalid URL format: {url}")
@@ -76,15 +185,7 @@ def download_image(url: str) -> Tuple[io.BytesIO, str]:
     logger.info(f"Downloading image from: {url}")
 
     try:
-        response = requests.get(
-            url,
-            timeout=REQUEST_TIMEOUT,
-            stream=True,
-            headers={
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) PowerPoint-MCP/1.0'
-            }
-        )
-        response.raise_for_status()
+        response = _get_following_redirects(url)
 
     except requests.exceptions.Timeout:
         raise ImageDownloadError(f"Timeout downloading image from {url}")

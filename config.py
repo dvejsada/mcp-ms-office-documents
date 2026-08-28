@@ -360,6 +360,19 @@ class Config(BaseModel):
             "RUN_BLOCKING_MAX_WORKERS environment variable."
         ),
     )
+    allow_private_image_addresses: bool = Field(
+        default=False,
+        description=(
+            "When True, image downloads may target private, loopback and "
+            "link-local addresses. Needed only when images are served from "
+            "inside the cluster or an intranet (e.g. a sibling service or a "
+            "MinIO endpoint reachable only on the internal network). Leave "
+            "False in any deployment reachable by untrusted callers: it is "
+            "what stops a caller-supplied image URL from being used to probe "
+            "internal services or cloud-metadata endpoints. Toggled via the "
+            "SSRF_ALLOW_PRIVATE_ADDRESSES environment variable."
+        ),
+    )
     stateless_http: bool = Field(
         default=False,
         description=(
@@ -512,6 +525,9 @@ class Config(BaseModel):
                 admin=admin_settings,
                 run_blocking_by_asyncio_thread_enabled=run_blocking_by_asyncio_thread_enabled,
                 run_blocking_max_workers=run_blocking_max_workers,
+                allow_private_image_addresses=cls._parse_bool(
+                    os.environ.get("SSRF_ALLOW_PRIVATE_ADDRESSES")
+                ),
                 stateless_http=stateless_http,
             )
         except ValidationError as e:
