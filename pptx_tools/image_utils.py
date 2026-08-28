@@ -12,6 +12,7 @@ import io
 import ipaddress
 import logging
 import socket
+import time
 from typing import Tuple
 from urllib.parse import urljoin, urlparse
 
@@ -138,13 +139,25 @@ def _get_following_redirects(url: str) -> requests.Response:
 
     Redirects are followed manually because ``requests`` would otherwise
     follow them without giving us a chance to check where they lead.
+
+    ``REQUEST_TIMEOUT`` budgets the whole chain rather than each hop, so a
+    server cannot hold a worker thread for a multiple of it by chaining slow
+    redirects. Tool handlers run on a small bounded thread pool (see
+    RUN_BLOCKING_MAX_WORKERS), so that multiple matters.
     """
     assert_url_is_public(url)
+    deadline = time.monotonic() + REQUEST_TIMEOUT
 
     for _ in range(MAX_REDIRECTS + 1):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise requests.exceptions.Timeout(
+                f"Timed out following redirects for {url}"
+            )
+
         response = requests.get(
             url,
-            timeout=REQUEST_TIMEOUT,
+            timeout=remaining,
             stream=True,
             allow_redirects=False,
             headers={
@@ -156,6 +169,10 @@ def _get_following_redirects(url: str) -> requests.Response:
             return response
 
         location = response.headers.get('Location')
+        # Nothing reads a 3xx body. requests.get() closes its own session, so
+        # this is belt-and-braces rather than a fix for an observed leak, but
+        # it keeps the intent explicit if this ever moves to a shared Session.
+        response.close()
         if not location:
             raise ImageDownloadError(f"Redirect without Location header from {url}")
         url = urljoin(url, location)

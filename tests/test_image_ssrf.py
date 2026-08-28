@@ -17,7 +17,7 @@ network access is involved).
 import socket
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 # Add project root to path for imports
 project_root = Path(__file__).parent.parent
@@ -25,8 +25,12 @@ sys.path.insert(0, str(project_root))
 
 import pytest
 
+import requests
+
 from pptx_tools.image_utils import (
+    REQUEST_TIMEOUT,
     SSRFProtectionError,
+    _get_following_redirects,
     assert_url_is_public,
     download_image,
 )
@@ -119,3 +123,52 @@ def test_redirect_to_private_address_is_blocked():
 def test_escape_hatch_allows_private_addresses(_protection_enabled):
     _protection_enabled.return_value.allow_private_image_addresses = True
     assert_url_is_public("http://127.0.0.1/image.png")  # does not raise
+
+
+def _redirect_to(location):
+    return MagicMock(is_redirect=True, headers={"Location": location})
+
+
+def test_intermediate_redirect_responses_are_closed():
+    """A 3xx body is never read, so its response is released explicitly."""
+    redirect = _redirect_to("https://example.com/final.png")
+    final = MagicMock(is_redirect=False, headers={"Content-Type": "image/png"})
+    final.iter_content.return_value = [b"image-bytes"]
+
+    with patch.object(socket, "getaddrinfo", _resolver({"example.com": ["93.184.216.34"]})):
+        with patch("pptx_tools.image_utils.requests.get", side_effect=[redirect, final]):
+            download_image("https://example.com/image.png")
+
+    redirect.close.assert_called_once()
+
+
+def test_redirect_chain_shares_one_timeout_budget():
+    """The whole chain is bounded by REQUEST_TIMEOUT, not each hop separately."""
+    redirect = _redirect_to("https://example.com/next.png")
+    # monotonic(): deadline base, then one reading per loop iteration.
+    clock = iter([0.0, 0.0, REQUEST_TIMEOUT + 1])
+
+    with patch.object(socket, "getaddrinfo", _resolver({"example.com": ["93.184.216.34"]})):
+        with patch("pptx_tools.image_utils.time.monotonic", lambda: next(clock)):
+            with patch("pptx_tools.image_utils.requests.get", return_value=redirect):
+                with pytest.raises(requests.exceptions.Timeout):
+                    _get_following_redirects("https://example.com/image.png")
+
+
+def test_each_hop_gets_only_the_remaining_budget():
+    """A hop's timeout shrinks as the shared budget is consumed."""
+    redirect = _redirect_to("https://example.com/next.png")
+    final = MagicMock(is_redirect=False, headers={})
+    clock = iter([0.0, 0.0, 10.0])
+    timeouts = []
+
+    def _get(url, **kwargs):
+        timeouts.append(kwargs["timeout"])
+        return redirect if len(timeouts) == 1 else final
+
+    with patch.object(socket, "getaddrinfo", _resolver({"example.com": ["93.184.216.34"]})):
+        with patch("pptx_tools.image_utils.time.monotonic", lambda: next(clock)):
+            with patch("pptx_tools.image_utils.requests.get", _get):
+                _get_following_redirects("https://example.com/image.png")
+
+    assert timeouts == [REQUEST_TIMEOUT, REQUEST_TIMEOUT - 10.0]
