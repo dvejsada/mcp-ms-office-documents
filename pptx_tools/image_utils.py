@@ -140,10 +140,16 @@ def _get_following_redirects(url: str) -> requests.Response:
     Redirects are followed manually because ``requests`` would otherwise
     follow them without giving us a chance to check where they lead.
 
-    ``REQUEST_TIMEOUT`` budgets the whole chain rather than each hop, so a
-    server cannot hold a worker thread for a multiple of it by chaining slow
-    redirects. Tool handlers run on a small bounded thread pool (see
-    RUN_BLOCKING_MAX_WORKERS), so that multiple matters.
+    ``REQUEST_TIMEOUT`` is shared across the whole chain rather than granted
+    afresh per hop, so chaining redirects no longer multiplies how long one
+    call can run. Tool handlers share a small bounded thread pool (see
+    RUN_BLOCKING_MAX_WORKERS), so that multiple mattered.
+
+    This is not a wall-clock guarantee: ``requests`` applies a timeout to each
+    socket operation, not to the transfer as a whole, so a server that dribbles
+    bytes just fast enough to keep resetting the read timeout can still hold a
+    hop, and the body read in :func:`download_image`, well past the budget.
+    Bounding that needs a deadline enforced across the body read too.
     """
     assert_url_is_public(url)
     deadline = time.monotonic() + REQUEST_TIMEOUT
