@@ -54,6 +54,3 @@ config/
 
 # Agent Zero project files (local only)
 .a0proj/
-
-# Internal working documents (not part of the public repo)
-documentacao-mcp-ms-office-documents.md
