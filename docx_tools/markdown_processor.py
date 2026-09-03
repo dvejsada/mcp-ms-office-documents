@@ -46,10 +46,18 @@ def _continues_ordered_run(stripped, ordered_run) -> bool:
     *ordered_run* is a ``{'next': int | None}`` cell tracking the number that
     would continue the most recent top-level ordered list (see
     :func:`process_markdown_content`). This lets a continuation list resume after
-    an intervening heading/blank line — e.g. items ``1.``/``2.`` under one
-    heading and ``3.``/``4.`` under the next — even though, in isolation, a lone
-    ``3.`` followed by a blank line is indistinguishable from a date and would
-    not pass :func:`ordered_list_is_genuine`.
+    ANY intervening content — a section heading, an evidence note, a list of
+    exhibits, a table — e.g. items ``1.``/``2.`` under one heading and
+    ``3.``/``4.`` under the next, even though, in isolation, a lone ``3.``
+    followed by a blank line is indistinguishable from a date and would not pass
+    :func:`ordered_list_is_genuine`.
+
+    The number must match the running count *exactly*, which is what keeps the
+    date misreads out: after a list ending at ``2.``, a later ``23. brezna 2026``
+    is still prose. The residual risk is a date whose day happens to be the next
+    number in the run (``3. zari 2026`` right after item 2) — escape it
+    (``3\\. zari 2026``) as with the ``1.``-prefixed dates that
+    :func:`ordered_list_is_genuine` already accepts.
     """
     if not ordered_run or ordered_run.get('next') is None:
         return False
@@ -83,12 +91,14 @@ def process_markdown_content(doc, content, return_elements=False,
     i = 0
     all_elements = []
     # Running ordered-list count: the number that would continue the most recent
-    # top-level ordered list. Preserved across headings, blank lines, block
-    # quotes and comment-directive blocks so a list can resume after a section
-    # heading or an interposed quote/styled note; reset by any other block
-    # content. Lets _continues_ordered_run() accept e.g. "3." after a heading
-    # even when it is blank-separated (and so not locally genuine). A mutable
-    # cell so process_list_items can update it through process_markdown_block.
+    # top-level ordered list. It survives ANY interposed content — headings
+    # (markdown or a centred "<center>**II.**</center>" section title), blank
+    # lines, quotes, evidence notes, bullet lists of exhibits, tables — because
+    # numbered paragraphs of a filing routinely have such content between them;
+    # only a new list starting at "1." re-bases it. Lets _continues_ordered_run()
+    # accept e.g. "3." after a section title even when it is blank-separated
+    # (and so not locally genuine). A mutable cell so process_list_items can
+    # update it through process_markdown_block.
     ordered_run = {'next': None}
     while i < n:
         line = lines[i]
@@ -126,38 +136,24 @@ def process_markdown_content(doc, content, return_elements=False,
                 stripped_hashes = first_line.lstrip('#')
                 level = len(first_line) - len(stripped_hashes)
                 elem = _add_heading(doc, level, stripped_hashes.strip(), style_map)._p
-                # A heading does not break ordered-list continuation.
             elif first_line.startswith('>'):
                 elem = _add_quote(doc, full_text[1:].strip(), style_map)._p
-                # A quote does not break ordered-list continuation (like a
-                # heading, it deliberately interrupts a numbered run).
             else:
                 para = doc.add_paragraph()
                 parse_inline_formatting(full_text, para)
                 elem = para._p
-                ordered_run['next'] = None
             if return_elements:
                 all_elements.append(elem)
                 doc._body._body.remove(elem)
             continue
         # --- All other block elements: delegate to block processor ---
-        # Continuation survives headings, blank lines (above), block quotes and
-        # complete <!-- --> comment lines. A style directive attaches to the
-        # block it styles, and that WHOLE directive-styled block (whatever its
-        # type — the dispatcher consumes directive + target together) is treated
-        # as a deliberate interruption of a numbered run, exactly like a
-        # heading: e.g. an evidence note or citation between numbered
-        # paragraphs of a legal filing. Any other block content breaks the run.
-        # A numbered line is left alone so a list that actually renders can
-        # update the count via process_list_items. An unclosed "<!--" is not a
-        # comment (it renders as literal prose), so it resets like any prose.
-        stripped = line.strip()
-        is_comment_line = _is_complete_comment(line)
-        if (HEADING_PATTERN.match(stripped) is None
-                and ORDERED_LIST_PATTERN.match(stripped) is None
-                and not stripped.startswith('>')
-                and not is_comment_line):
-            ordered_run['next'] = None
+        # Nothing here resets the running count: interposed content of ANY kind
+        # (a centred section heading, an evidence note, a bullet list of
+        # exhibits, a table, a quote …) is an interruption of a numbered run,
+        # not its end — which is exactly how numbered paragraphs of a legal
+        # filing are written. The run ends only when a new top-level ordered
+        # list starts at "1." (process_list_items then re-bases the count) or
+        # when the content does.
         i, block_elems = process_markdown_block(doc, lines, i,
                                                 return_element=return_elements,
                                                 style_map=style_map,

@@ -290,7 +290,7 @@ Both the Word and Excel tools accept Markdown. These references cover **everythi
 |--------|--------|
 | `# H1` … `###### H6` | Headings 1–6 |
 | `- item` / `* item` / `+ item` | Bullet list (nest by indenting children — 2-4 spaces or a tab → `List Bullet 2/3`) |
-| `1. item` / `2. item` | Numbered list (nest by indenting children). **Numbering restarts automatically** whenever a list begins again with `1.` |
+| `1. item` / `2. item` | Numbered list (nest by indenting children). The count **continues across anything written between the items** (a section title, a paragraph, a bullet list, a table) as long as the numbers run consecutively; **numbering restarts** only where a list begins again with `1.` |
 | `> quote` | Block quote (`Quote` style) |
 | `\| A \| B \|` + `\|---\|---\|` | Table (see table features below) |
 | ` ``` ` … ` ``` ` (or `~~~`) | Fenced code block — content is rendered verbatim in a monospace font and **not** parsed as markdown |
@@ -300,7 +300,9 @@ Both the Word and Excel tools accept Markdown. These references cover **everythi
 
 > ⚠️ Don't confuse `---` (page break) with `***` (horizontal line).
 
-> 💡 A single numbered line is only treated as a list when it starts at `1.` **or** is followed by another item. This means a standalone date like `23. června 2026` renders as plain text, not a list. The one exception is a day-1 date (`1. června 2026`), which is indistinguishable from a one-item list — escape the dot to keep it as text: `1\. června 2026`.
+> 💡 Numbered paragraphs of a filing keep counting across the section titles, evidence notes and exhibit lists between them — write `3.`, `4.`, … and they render as one numbered list, not as paragraphs with typed-in numbers.
+
+> 💡 A single numbered line is only treated as a list when it starts at `1.`, continues the count of an earlier list, **or** is followed by another item. This means a standalone date like `23. června 2026` renders as plain text, not a list. Two cases stay ambiguous and need the dot escaped to render as text: a day-1 date (`1. června 2026`), which is indistinguishable from a one-item list, and a date whose day happens to be the next number in a running count (`3. září 2026` right after item `2.`) — write them as `1\. června 2026` / `3\. září 2026`.
 
 **Inline formatting** (works in paragraphs, headings, list items, table cells, quotes):
 
