@@ -5,11 +5,14 @@
    the dynamic-template placeholder path. A prose ``<br>`` stays an inline soft
    break, and a ``<br>`` inside a table cell is untouched.
 
-2. Ordered-list numbering continues across an intervening heading/blank line
-   (e.g. procedural filings whose numbered paragraphs run 1, 2 under one heading
-   and 3, 4 under the next). A running counter remembers where the previous list
-   left off; a lone numbered line with no such predecessor still renders as prose
-   (date disambiguation, see test_docx_ordered_list_date.py).
+2. Ordered-list numbering continues across ANY intervening content — a heading
+   (markdown or a centred section title), a blank line, an evidence note, a
+   bullet list of exhibits, a table — as procedural filings whose numbered
+   paragraphs run 1, 2 under one heading and 3, 4 under the next require. A
+   running counter remembers where the previous list left off and only a new
+   list starting at "1." re-bases it; a lone numbered line with no such
+   predecessor, or one that does not match the count exactly, still renders as
+   prose (date disambiguation, see test_docx_ordered_list_date.py).
 
 Numbering is asserted on the underlying XML because Word computes the visible
 numbers at display time; they are not stored as paragraph text.
@@ -161,12 +164,14 @@ def test_new_list_starting_at_one_restarts_after_heading():
     assert _start_override(doc, _num_id_of(items[2])) == "1"
 
 
-def test_prose_between_lists_breaks_continuation():
-    # An ordinary paragraph (not a heading) resets the run, so "3." with no
-    # immediate sibling falls back to prose rather than joining the count.
+def test_numbering_continues_after_plain_prose():
+    # An ordinary paragraph between numbered paragraphs (an evidence note, a
+    # comment on the preceding point) interrupts the run without ending it.
     md = "1. Prvni\n\n2. Druhy\n\nNejaky odstavec.\n\n3. Treti\n"
     doc, paras = _render(md)
-    assert any(p.text == "3. Treti" and not _is_ordered(p) for p in paras)
+    items = [p for p in paras if _is_ordered(p)]
+    assert [p.text for p in items] == ["Prvni", "Druhy", "Treti"]
+    assert _start_override(doc, _num_id_of(items[2])) == "3"
 
 
 def test_numbering_continues_after_blockquote():
@@ -213,19 +218,60 @@ def test_directive_exemption_covers_any_styled_block():
     assert _start_override(doc, _num_id_of(items[2])) == "3"
 
 
-def test_unclosed_comment_line_is_prose_and_breaks_continuation():
-    # An unclosed "<!--" is not a comment: it renders as literal prose, so it
-    # must reset the run like any other prose paragraph (no exemption).
+def test_unclosed_comment_line_renders_literally_without_ending_the_run():
+    # An unclosed "<!--" is not a comment: it renders as literal prose. Like any
+    # other interposed prose it interrupts the numbered run without ending it.
     md = "1. Prvni\n\n2. Druhy\n\n<!-- style: X\n\n3. Treti\n"
     doc, paras = _render(md)
     assert any("<!-- style: X" in p.text for p in paras), "unclosed comment renders literally"
-    assert any(p.text == "3. Treti" and not _is_ordered(p) for p in paras)
+    items = [p for p in paras if _is_ordered(p)]
+    assert [p.text for p in items] == ["Prvni", "Druhy", "Treti"]
 
 
 def test_standalone_non_one_pair_blank_separated_stays_prose():
     # No preceding list -> textually a date pair -> prose (date disambiguation).
     doc, paras = _render("5. Paty\n\n6. Sesty")
     assert all(not _is_ordered(p) for p in paras if p.text.strip())
+
+
+def test_numbering_continues_after_centred_section_title():
+    # Filings mark sections with a centred numeral rather than a markdown
+    # heading; that is an interruption of the numbered run, not its end.
+    md = (
+        "<center>**I.**</center>\n\n1. Prvni\n\n2. Druhy\n\n"
+        "<center>**II.**</center>\n<center>**SKUTKOVY STAV**</center>\n\n"
+        "3. Treti\n"
+    )
+    doc, paras = _render(md)
+    items = [p for p in paras if _is_ordered(p)]
+    assert [p.text for p in items] == ["Prvni", "Druhy", "Treti"]
+    assert _start_override(doc, _num_id_of(items[2])) == "3"
+
+
+def test_numbering_continues_after_evidence_note_and_bullet_list():
+    # The reported shape: each numbered paragraph is followed by an italic
+    # "Dukaz:" note and a bullet list of exhibits before the next number.
+    md = (
+        "1. Prvni\n\n2. Druhy\n\n"
+        "*__Dukaz__:*\n\n- *Smlouva ze dne 14. 3. 2022*\n\n"
+        "3. Treti\n\n*__Dukaz__:*\n\n- *Protokol ze dne 26. 9. 2023*\n\n"
+        "4. Ctvrty\n"
+    )
+    doc, paras = _render(md)
+    items = [p for p in paras if _is_ordered(p)]
+    assert [p.text for p in items] == ["Prvni", "Druhy", "Treti", "Ctvrty"]
+    # Each resumption is its own numbering instance, re-based on the count.
+    assert [_start_override(doc, _num_id_of(p)) for p in items] == ["1", "1", "3", "4"]
+    bullets = [p for p in paras if p.style.name.startswith("List Bullet")]
+    assert len(bullets) == 2, "the exhibit lists still render as bullets"
+
+
+def test_numbering_continues_after_a_table():
+    md = "1. Prvni\n\n| H1 | H2 |\n| --- | --- |\n| a | b |\n\n2. Druhy\n"
+    doc, paras = _render(md)
+    items = [p for p in paras if _is_ordered(p)]
+    assert [p.text for p in items] == ["Prvni", "Druhy"]
+    assert len(doc.tables) == 1
 
 
 def test_non_continuing_number_after_heading_stays_prose():
