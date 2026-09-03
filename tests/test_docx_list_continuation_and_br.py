@@ -274,6 +274,25 @@ def test_numbering_continues_after_a_table():
     assert len(doc.tables) == 1
 
 
+def test_date_matching_the_running_count_is_swept_in_unless_escaped():
+    # The accepted trade-off of an unbounded run: a date whose day happens to be
+    # the next number IS read as the next item. Escaping the dot suppresses it —
+    # the same escape the day-1 case already needs. Both halves are pinned here
+    # so a change to either is a deliberate one.
+    swept = "1. Prvni\n\n2. Druhy\n\n3. zari 2026 se kona jednani.\n"
+    _, paras = _render(swept)
+    items = [p for p in paras if _is_ordered(p)]
+    assert [p.text for p in items] == ["Prvni", "Druhy", "zari 2026 se kona jednani."]
+
+    escaped = "1. Prvni\n\n2. Druhy\n\n3\\. zari 2026 se kona jednani.\n"
+    _, paras = _render(escaped)
+    items = [p for p in paras if _is_ordered(p)]
+    assert [p.text for p in items] == ["Prvni", "Druhy"]
+    # The backslash is consumed; the date keeps its literal "3." as prose.
+    assert any(p.text == "3. zari 2026 se kona jednani." and not _is_ordered(p)
+               for p in paras)
+
+
 def test_non_continuing_number_after_heading_stays_prose():
     # Continuation must match the running count exactly: after a list ends at 2
     # (run resumes at 3), a "23." under the next heading does not continue and so
