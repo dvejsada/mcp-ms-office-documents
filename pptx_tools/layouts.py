@@ -137,7 +137,10 @@ def classify_layout(layout) -> Optional[str]:
     pictures = [t for t in types if t == PP_PLACEHOLDER.PICTURE]
 
     # A picture placeholder is the distinguishing feature; nothing else has one.
-    if pictures:
+    # It still has to carry a title, like every other titled role: a full-bleed
+    # photo layout with no title placeholder would otherwise be picked
+    # confidently and then silently drop the slide's title.
+    if pictures and titles:
         return ROLE_IMAGE_TEXT
 
     if vertical:

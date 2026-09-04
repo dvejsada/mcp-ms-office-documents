@@ -377,12 +377,17 @@ class SlideHelpers:
         if title:
             self._set_title(slide, title)
 
-        # Take the first body/object placeholder's rectangle, whatever its idx:
-        # a template's content placeholder is not always idx 1.
-        content_placeholder = None
-        for placeholder in self._content_placeholders(slide):
-            content_placeholder = placeholder
-            break
+        # Take the LARGEST body/object placeholder's rectangle, whatever its
+        # idx. Not the first: on a Comparison layout (heading, content, heading,
+        # content) the first is the small heading strip, so a table or chart
+        # placed there was squeezed into a 0.9-inch band instead of the 4-inch
+        # content box. Largest-by-area is the content region on every layout
+        # that has more than one.
+        content_placeholder = max(
+            self._content_placeholders(slide),
+            key=lambda ph: (ph.width or 0) * (ph.height or 0),
+            default=None,
+        )
 
         if content_placeholder:
             left = content_placeholder.left

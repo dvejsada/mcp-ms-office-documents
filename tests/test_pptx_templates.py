@@ -19,6 +19,7 @@ sys.path.insert(0, str(project_root))
 import pytest
 import yaml
 from pptx import Presentation as PptxReader
+from pptx.util import Emu
 
 from pptx_tools import layouts as layouts_mod
 from pptx_tools import templates as templates_mod
@@ -144,6 +145,30 @@ class TestClassification:
         roles = {layout.name: classify_layout(layout) for layout in prs.slide_layouts}
         assert roles["Obsah s titulkem"] is None
 
+    def test_picture_layout_without_a_title_is_refused(self):
+        """A full-bleed photo layout has nowhere to put the slide's title.
+
+        The picture branch used to return image_text before the "no title,
+        refuse" guard every other role goes through, so a titleless photo
+        layout was picked confidently and then dropped the title.
+        """
+        from types import SimpleNamespace
+        from pptx.enum.shapes import PP_PLACEHOLDER as PH
+
+        class FakePlaceholder:
+            def __init__(self, kind):
+                self.placeholder_format = SimpleNamespace(type=kind, idx=0)
+                self.text_frame = None
+
+        class FakeLayout:
+            def __init__(self, kinds):
+                self.placeholders = [FakePlaceholder(k) for k in kinds]
+                self.name = "fake"
+
+        assert classify_layout(FakeLayout([PH.PICTURE])) is None
+        assert classify_layout(FakeLayout([PH.PICTURE, PH.BODY])) is None
+        assert classify_layout(FakeLayout([PH.TITLE, PH.PICTURE])) == "image_text"
+
     def test_picture_layout_detected(self):
         prs = PptxReader(str(BASE_16_9))
         roles = {layout.name: classify_layout(layout) for layout in prs.slide_layouts}
@@ -256,6 +281,49 @@ class TestResolutionOrder:
         assert any("Missing Layout" in w for w in pres.warnings)
         # Still built, on the detected layout.
         assert layout_names_of(pres) == ["Nadpis a obsah"]
+
+    def test_a_dropped_title_is_reported(self, registry):
+        """Every other dropped element warns; the title used to vanish silently."""
+        make_template(registry["custom"] / "custom_pptx_template_16_9.pptx")
+
+        pres = build([{"type": "content", "title": "THIS TITLE MATTERS",
+                       "body": "- a", "layout": "Prázdný"}])
+
+        slide = pres.presentation.slides[0]
+        assert not any(
+            "THIS TITLE MATTERS" in shape.text_frame.text
+            for shape in slide.shapes if shape.has_text_frame
+        )
+        assert any("THIS TITLE MATTERS" in w and "no title placeholder" in w
+                   for w in pres.warnings)
+
+    @pytest.mark.parametrize("slide_type,extra", [
+        ("content", {"body": "- a"}),
+        ("table", {"rows": [["A"], ["1"]]}),
+        ("quote", {"text": "q"}),
+        ("section", {}),
+        ("two_column", {"left": {"body": "- l"}, "right": {"body": "- r"}}),
+    ])
+    def test_every_slide_type_reports_a_dropped_title(self, registry, slide_type, extra):
+        make_template(registry["custom"] / "custom_pptx_template_16_9.pptx")
+
+        pres = build([{"type": slide_type, "title": "Gone", "layout": "Prázdný", **extra}])
+
+        assert any("no title placeholder" in w for w in pres.warnings)
+
+    def test_content_goes_in_the_largest_placeholder(self, registry):
+        """On Comparison the first content placeholder is the heading strip.
+
+        Taking the first put a table into a 0.9-inch band instead of the
+        4-inch content box.
+        """
+        make_template(registry["custom"] / "custom_pptx_template_16_9.pptx")
+
+        pres = build([{"type": "table", "title": "T", "rows": [["A"], ["1"]],
+                       "layout": "Porovnání"}])
+
+        table_shape = [s for s in pres.presentation.slides[0].shapes if s.has_table][0]
+        assert Emu(table_shape.height).inches > 3.0
 
     def test_two_column_picks_comparison_when_headings_present(self, registry):
         make_template(registry["custom"] / "custom_pptx_template_16_9.pptx")

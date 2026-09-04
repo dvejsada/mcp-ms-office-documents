@@ -148,6 +148,33 @@ class PowerpointPresentation(SlideHelpers):
         logger.warning("Using the built-in PowerPoint theme for %s", format)
         return Presentation()
 
+    def _apply_title(self, slide, text, index: int) -> None:
+        """Set the slide title, saying so when the layout cannot hold one.
+
+        Every other dropped element on a slide is reported — a subtitle, the
+        bullets, the footer. The title was the one that vanished in silence,
+        which is the failure this phase exists to remove, not to introduce
+        somewhere new.
+        """
+        if self._set_title(slide, text):
+            return
+        if text:
+            self._warn(
+                index,
+                f"layout {slide.slide_layout.name!r} has no title placeholder; "
+                f"the title {text!r} was dropped.",
+            )
+
+    def _content_slide(self, slide_data, index: int):
+        """Resolve, create and title a slide, and return its content rectangle.
+
+        Shared by every slide type that draws into the body area itself
+        (table, image, chart, scatter, quote).
+        """
+        slide = self._new_slide(slide_data, index)
+        self._apply_title(slide, slide_data.title, index)
+        return self._add_title_content_slide("", slide=slide)
+
     def _new_slide(self, slide_data, index: int):
         """Add a slide on the layout resolved for its type.
 
@@ -224,7 +251,7 @@ class PowerpointPresentation(SlideHelpers):
         """Build a title slide with title and optional subtitle."""
         slide = self._new_slide(slide_data, index)
 
-        self._set_title(slide, slide_data.title)
+        self._apply_title(slide, slide_data.title, index)
 
         subtitle = self._placeholder_of_type(
             slide, (PP_PLACEHOLDER.SUBTITLE, PP_PLACEHOLDER.BODY, PP_PLACEHOLDER.OBJECT)
@@ -239,13 +266,13 @@ class PowerpointPresentation(SlideHelpers):
     def _build_section_slide(self, slide_data, index: int) -> None:
         """Build a section divider slide."""
         slide = self._new_slide(slide_data, index)
-        self._set_title(slide, slide_data.title)
+        self._apply_title(slide, slide_data.title, index)
         self._add_speaker_notes(slide, slide_data.notes)
 
     def _build_content_slide(self, slide_data, index: int) -> None:
         """Build a content slide with bullet points."""
         slide = self._new_slide(slide_data, index)
-        self._set_title(slide, slide_data.title)
+        self._apply_title(slide, slide_data.title, index)
 
         bullets = body_to_bullets(slide_data.body)
         if bullets:
@@ -262,9 +289,7 @@ class PowerpointPresentation(SlideHelpers):
 
     def _build_table_slide(self, slide_data, index: int) -> None:
         """Build a table slide with a styled table."""
-        slide, left, top, width, height = self._add_title_content_slide(
-            slide_data.title or "", slide=self._new_slide(slide_data, index)
-        )
+        slide, left, top, width, height = self._content_slide(slide_data, index)
 
         rows, col_alignments = parse_table_data(slide_data.rows)
         if not rows:
@@ -309,9 +334,7 @@ class PowerpointPresentation(SlideHelpers):
 
     def _build_image_slide(self, slide_data, index: int) -> None:
         """Build a slide with an image from a URL or inline data URI."""
-        slide, left, top, width, height = self._add_title_content_slide(
-            slide_data.title or "", slide=self._new_slide(slide_data, index)
-        )
+        slide, left, top, width, height = self._content_slide(slide_data, index)
 
         caption = slide_data.caption
         max_height = height - (Inches(0.6) if caption else 0)
@@ -355,6 +378,7 @@ class PowerpointPresentation(SlideHelpers):
         has_headings = bool(left_col.heading or right_col.heading)
 
         slide = self._new_slide(slide_data, index)
+        self._apply_title(slide, slide_data.title, index)
 
         left_bullets = body_to_bullets(left_col.body)
         right_bullets = body_to_bullets(right_col.body)
@@ -370,8 +394,7 @@ class PowerpointPresentation(SlideHelpers):
             idx = shape.placeholder_format.idx
 
             if idx == 0:
-                if slide_data.title:
-                    shape.text = slide_data.title
+                continue  # already set through _apply_title
             elif idx in heading_slots:
                 if heading_slots[idx]:
                     shape.text = heading_slots[idx]
@@ -385,9 +408,7 @@ class PowerpointPresentation(SlideHelpers):
 
     def _build_chart_slide(self, slide_data, index: int) -> None:
         """Build a slide with a category chart."""
-        slide, left, top, width, height = self._add_title_content_slide(
-            slide_data.title or "", slide=self._new_slide(slide_data, index)
-        )
+        slide, left, top, width, height = self._content_slide(slide_data, index)
 
         chart_data = {
             "categories": slide_data.categories,
@@ -432,9 +453,7 @@ class PowerpointPresentation(SlideHelpers):
 
     def _build_scatter_slide(self, slide_data, index: int) -> None:
         """Build a slide with an XY (scatter) chart."""
-        slide, left, top, width, height = self._add_title_content_slide(
-            slide_data.title or "", slide=self._new_slide(slide_data, index)
-        )
+        slide, left, top, width, height = self._content_slide(slide_data, index)
 
         try:
             add_scatter_to_slide(
@@ -458,9 +477,7 @@ class PowerpointPresentation(SlideHelpers):
 
     def _build_quote_slide(self, slide_data, index: int) -> None:
         """Build a quote/citation slide."""
-        slide, left, top, width, height = self._add_title_content_slide(
-            slide_data.title or "", slide=self._new_slide(slide_data, index)
-        )
+        slide, left, top, width, height = self._content_slide(slide_data, index)
 
         quote_box = slide.shapes.add_textbox(left, top, width, height)
         tf = quote_box.text_frame
