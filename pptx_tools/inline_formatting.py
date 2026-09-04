@@ -51,8 +51,13 @@ _INLINE_FORMAT_RE = re.compile(
     # a non-space non-star character, or a complete nested bold unit.
     r'|\*(?=[^\s*])(?:[^*]|\*\*[^*]+\*\*)*?(?:[^\s*]|\*\*[^*]+\*\*)\*'
     # `code`
-    r'|`[^`]+`)'
+    r'|`[^`]+`'
+    # [link text](https://url) — no nesting inside the target, and the label
+    # is parsed for emphasis like any other segment.
+    r'|\[[^\]\n]+\]\([^)\s]+\))'
 )
+
+_LINK_RE = re.compile(r'^\[([^\]\n]+)\]\(([^)\s]+)\)$')
 
 _ESCAPE_RE = re.compile(r'\\(.)')  # backslash-escaped character
 
@@ -144,10 +149,15 @@ def _restore_escapes(text: str, escape_ctx: dict) -> str:
 
 
 def _add_run(paragraph, text: str, font_size=None, bold=False, italic=False,
-             strike=False, underline=False, font_name=None):
+             strike=False, underline=False, font_name=None, hyperlink=None):
     """Add a formatted run to a paragraph."""
     run = paragraph.add_run()
     run.text = text
+    if hyperlink:
+        # Setting the address makes it a real, clickable link and lets the
+        # template's hyperlink theme colour apply, rather than faking one with
+        # blue underlined text.
+        run.hyperlink.address = hyperlink
     if font_size:
         run.font.size = font_size
     if bold:
@@ -200,6 +210,16 @@ def _parse_segment(text: str, paragraph, font_size=None, bold=False, italic=Fals
             # Code (monospace)
             _add_run(paragraph, _restore_escapes(part[1:-1], escape_ctx),
                      font_size=font_size, bold=bold, italic=italic, font_name='Courier New')
+
+        elif part.startswith('[') and _LINK_RE.match(part):
+            # Hyperlink: render the label with its own formatting, then point
+            # every run it produced at the target.
+            label, target = _LINK_RE.match(part).groups()
+            first_new = len(paragraph.runs)
+            _parse_segment(label, paragraph, font_size=font_size,
+                           bold=bold, italic=italic, escape_ctx=escape_ctx)
+            for run in paragraph.runs[first_new:]:
+                run.hyperlink.address = _restore_escapes(target, escape_ctx)
 
         else:
             # Plain text

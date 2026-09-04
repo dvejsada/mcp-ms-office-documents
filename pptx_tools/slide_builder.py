@@ -16,7 +16,8 @@ import logging
 from typing import Any, List, Optional, Sequence
 
 from pptx import Presentation
-from pptx.enum.shapes import PP_PLACEHOLDER
+from pptx.dml.color import MSO_THEME_COLOR
+from pptx.enum.shapes import MSO_SHAPE, PP_PLACEHOLDER
 from pptx.enum.text import PP_ALIGN
 from pptx.util import Inches, Pt
 from pptx.oxml.ns import qn
@@ -25,6 +26,7 @@ from pptx.oxml import parse_xml
 from .constants import (
     DEFAULT_BODY_FONT_SIZE, DEFAULT_SUBTITLE_FONT_SIZE,
     DEFAULT_CAPTION_FONT_SIZE, DEFAULT_QUOTE_FONT_SIZE,
+    KPI_VALUE_FONT_SIZE, TIMELINE_DETAIL_FONT_SIZE,
     TABLE_HEADER_FILL,
     DEFAULT_SLIDE_FORMAT, VALID_SLIDE_FORMATS,
 )
@@ -39,7 +41,7 @@ from .chart_utils import (
     set_axis_titles, ChartDataError,
 )
 from .layouts import LayoutResolver, role_for_slide
-from .schema import coerce_slides
+from .schema import Bullet, coerce_slides
 from .templates import open_template, select_template
 
 logger = logging.getLogger(__name__)
@@ -227,6 +229,10 @@ class PowerpointPresentation(SlideHelpers):
             "chart": self._build_chart_slide,
             "scatter": self._build_scatter_slide,
             "quote": self._build_quote_slide,
+            "kpi": self._build_kpi_slide,
+            "agenda": self._build_agenda_slide,
+            "closing": self._build_closing_slide,
+            "timeline": self._build_timeline_slide,
         }
 
         logger.info("Building %d slides", len(slides))
@@ -337,19 +343,36 @@ class PowerpointPresentation(SlideHelpers):
         slide, left, top, width, height = self._content_slide(slide_data, index)
 
         caption = slide_data.caption
+        bullets = body_to_bullets(slide_data.body)
+
+        # With text beside it the picture takes the left 55%, the text the rest.
+        image_width = width
+        if bullets:
+            image_width = int(width * 0.55)
+            gutter = Inches(0.3)
+            text_left = left + image_width + gutter
+            text_width = width - image_width - gutter
+            box = slide.shapes.add_textbox(text_left, top, text_width, height)
+            self._fill_bullets(box.text_frame, bullets)
+            apply_autofit(
+                box.text_frame,
+                scale=self._fit_scale(bullets, text_width, height),
+            )
+
         max_height = height - (Inches(0.6) if caption else 0)
 
         picture, error = self._add_image(
             slide, slide_data.source,
-            left=left, top=top, max_width=width, max_height=max_height,
+            left=left, top=top, max_width=image_width, max_height=max_height,
+            center_horizontal=not bullets,
         )
 
         if picture and caption:
             self._add_text_box(
                 slide, caption,
-                left=left,
+                left=picture.left,
                 top=picture.top + picture.height + Inches(0.1),
-                width=width,
+                width=picture.width,
                 height=Inches(0.5),
                 font_size=DEFAULT_CAPTION_FONT_SIZE,
                 italic=True,
@@ -409,6 +432,20 @@ class PowerpointPresentation(SlideHelpers):
     def _build_chart_slide(self, slide_data, index: int) -> None:
         """Build a slide with a category chart."""
         slide, left, top, width, height = self._content_slide(slide_data, index)
+
+        bullets = body_to_bullets(slide_data.body)
+        if bullets:
+            chart_width = int(width * 0.6)
+            gutter = Inches(0.3)
+            text_left = left + chart_width + gutter
+            text_width = width - chart_width - gutter
+            box = slide.shapes.add_textbox(text_left, top, text_width, height)
+            self._fill_bullets(box.text_frame, bullets)
+            apply_autofit(
+                box.text_frame,
+                scale=self._fit_scale(bullets, text_width, height),
+            )
+            width = chart_width
 
         chart_data = {
             "categories": slide_data.categories,
@@ -505,8 +542,187 @@ class PowerpointPresentation(SlideHelpers):
         self._add_speaker_notes(slide, slide_data.notes)
 
     # -------------------------------------------------------------------------
+    # Slide types that draw their own shapes
+    # -------------------------------------------------------------------------
+
+    def _build_kpi_slide(self, slide_data, index: int) -> None:
+        """Build a row of headline figures.
+
+        Drawn rather than placed in a body placeholder: the point of a KPI row
+        is the typographic contrast between a large figure and a small label,
+        which a bullet list cannot express.
+        """
+        slide, left, top, width, height = self._content_slide(slide_data, index)
+
+        items = slide_data.items
+        gutter = Inches(0.25)
+        cell_width = int((width - gutter * (len(items) - 1)) / len(items))
+        # Sit the row a little above centre; a KPI slide reads as a headline.
+        block_height = min(height, Inches(2.4))
+        block_top = top + int(max(0, (height - block_height)) / 3)
+
+        for position, item in enumerate(items):
+            cell_left = left + position * (cell_width + gutter)
+            box = slide.shapes.add_textbox(cell_left, block_top, cell_width, block_height)
+            frame = box.text_frame
+            frame.word_wrap = True
+
+            value = frame.paragraphs[0]
+            value.text = item.value
+            value.alignment = PP_ALIGN.CENTER
+            value.font.size = KPI_VALUE_FONT_SIZE
+            value.font.bold = True
+
+            label = frame.add_paragraph()
+            label.text = item.label
+            label.alignment = PP_ALIGN.CENTER
+            label.font.size = DEFAULT_CAPTION_FONT_SIZE
+            label.space_before = Pt(4)
+
+            if item.delta:
+                delta = frame.add_paragraph()
+                delta.text = item.delta
+                delta.alignment = PP_ALIGN.CENTER
+                delta.font.size = DEFAULT_CAPTION_FONT_SIZE
+                delta.font.italic = True
+                delta.space_before = Pt(2)
+                # Theme accent, so the figure follows the template's palette.
+                delta.font.color.theme_color = MSO_THEME_COLOR.ACCENT_1
+
+        if len(items) > 4:
+            self._warn(
+                index,
+                f"{len(items)} figures on one KPI slide will be cramped; "
+                "two to four read best.",
+            )
+
+        self._add_speaker_notes(slide, slide_data.notes)
+
+    def _build_agenda_slide(self, slide_data, index: int) -> None:
+        """Build a numbered agenda.
+
+        With no explicit items the entries are taken from the deck's own
+        ``section`` slides, in order — which is the usual case and cannot drift
+        out of step with the deck the way a hand-written list does.
+        """
+        items = slide_data.items
+        derived = False
+        if items is None:
+            items = [s.title for s in self.slides if s.type == "section" and s.title]
+            derived = True
+
+        if not items:
+            self._warn(
+                index,
+                "agenda has no items and the deck has no section slides to derive "
+                "them from; the slide is empty.",
+            )
+
+        slide = self._new_slide(slide_data, index)
+        self._apply_title(slide, slide_data.title or "Agenda", index)
+
+        if items:
+            bullets = [Bullet(text=f"{n}.  {text}") for n, text in enumerate(items, 1)]
+            placeholders = self._content_placeholders(slide)
+            if placeholders:
+                placeholders[0].text = ""
+                self._fill_bullets(placeholders[0].text_frame, bullets)
+                self._fit_text(placeholders[0], bullets, index)
+            else:
+                self._warn(index, "this layout has no body placeholder; the agenda was dropped.")
+
+        if derived and items:
+            logger.debug("Agenda derived from %d section slides", len(items))
+
+        self._add_speaker_notes(slide, slide_data.notes)
+
+    def _build_closing_slide(self, slide_data, index: int) -> None:
+        """Build a closing / thank-you slide."""
+        slide = self._new_slide(slide_data, index)
+        self._apply_title(slide, slide_data.title or "Thank you", index)
+
+        lines = []
+        if slide_data.subtitle:
+            lines.append(slide_data.subtitle)
+        lines.extend(slide_data.contact or [])
+
+        if lines:
+            target = self._placeholder_of_type(
+                slide, (PP_PLACEHOLDER.SUBTITLE, PP_PLACEHOLDER.BODY, PP_PLACEHOLDER.OBJECT)
+            )
+            if target is not None:
+                target.text = ""
+                self._fill_bullets(target.text_frame, [Bullet(text=line) for line in lines])
+            else:
+                self._warn(
+                    index,
+                    "this layout has no subtitle or body placeholder; the closing "
+                    "lines were dropped.",
+                )
+
+        self._add_speaker_notes(slide, slide_data.notes)
+
+    def _build_timeline_slide(self, slide_data, index: int) -> None:
+        """Build a row of steps as chevrons or boxes.
+
+        Autoshapes rather than SmartArt: python-pptx cannot create SmartArt, and
+        a row of chevrons carries the same "these follow one another" meaning
+        without the dependency.
+        """
+        slide, left, top, width, height = self._content_slide(slide_data, index)
+
+        steps = slide_data.steps
+        shape_type = MSO_SHAPE.CHEVRON if slide_data.style == "chevron" else MSO_SHAPE.ROUNDED_RECTANGLE
+        # Chevrons interlock, so they overlap slightly; boxes get a gutter.
+        gutter = Inches(-0.12) if slide_data.style == "chevron" else Inches(0.15)
+
+        step_width = int((width - gutter * (len(steps) - 1)) / len(steps))
+        step_height = min(height, Inches(1.1))
+        step_top = top + int(max(0, (height - step_height)) / 3)
+
+        for position, step in enumerate(steps):
+            shape = slide.shapes.add_shape(
+                shape_type,
+                left + position * (step_width + gutter),
+                step_top, step_width, step_height,
+            )
+            shape.fill.solid()
+            shape.fill.fore_color.theme_color = MSO_THEME_COLOR.ACCENT_1
+            shape.line.fill.background()
+
+            frame = shape.text_frame
+            frame.word_wrap = True
+            label = frame.paragraphs[0]
+            label.text = step.label
+            label.alignment = PP_ALIGN.CENTER
+            label.font.size = DEFAULT_CAPTION_FONT_SIZE
+            label.font.bold = True
+
+            if step.detail:
+                # Detail below the shape, so a long line cannot burst the chevron.
+                caption = slide.shapes.add_textbox(
+                    left + position * (step_width + gutter),
+                    step_top + step_height + Inches(0.1),
+                    step_width, Inches(0.8),
+                )
+                caption.text_frame.word_wrap = True
+                detail = caption.text_frame.paragraphs[0]
+                detail.text = step.detail
+                detail.alignment = PP_ALIGN.CENTER
+                detail.font.size = TIMELINE_DETAIL_FONT_SIZE
+
+        self._add_speaker_notes(slide, slide_data.notes)
+
+    # -------------------------------------------------------------------------
     # Fit, language, footer
     # -------------------------------------------------------------------------
+
+    def _fit_scale(self, bullets, width, height):
+        """Shrink factor for a text box, or None when the text already fits."""
+        fill = estimate_text_fill(
+            bullets, width, height, font_size_pt=float(DEFAULT_BODY_FONT_SIZE.pt)
+        )
+        return (1.0 / fill) if fill > 1.0 else None
 
     def _fit_text(self, placeholder, bullets, index: int) -> None:
         """Ask PowerPoint to shrink overfull body text, and warn when it is far gone."""

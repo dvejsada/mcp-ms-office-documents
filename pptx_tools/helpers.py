@@ -631,9 +631,17 @@ class SlideHelpers:
 
                 cell = table.cell(row_idx, col_idx)
                 # cell_to_text, not a falsy test: `if cell_text` blanked a numeric 0.
-                cell.text = cell_to_text(cell_text)
+                text = cell_to_text(cell_text)
 
                 paragraph = cell.text_frame.paragraphs[0]
+
+                # Cells take the same inline markdown as every other text field;
+                # previously **bold** showed up literally inside a table.
+                if needs_inline_processing(text):
+                    apply_inline_formatting(paragraph, text)
+                else:
+                    cell.text = text
+                    paragraph = cell.text_frame.paragraphs[0]
 
                 # Apply column alignment
                 if column_alignments and col_idx < len(column_alignments):

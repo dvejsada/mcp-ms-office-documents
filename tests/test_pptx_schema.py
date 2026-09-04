@@ -71,6 +71,7 @@ class TestSchemaShape:
         assert set(SLIDE_TYPES) == {
             "title", "section", "content", "table",
             "chart", "scatter", "image", "two_column", "quote",
+            "kpi", "agenda", "closing", "timeline",
         }
 
     def test_unknown_type_names_the_valid_ones(self):

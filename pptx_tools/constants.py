@@ -44,6 +44,12 @@ DEFAULT_BODY_FONT_SIZE = Pt(18)
 DEFAULT_CAPTION_FONT_SIZE = Pt(14)
 DEFAULT_QUOTE_FONT_SIZE = Pt(28)
 
+# KPI figures are meant to read from the back of a room; the label beside them
+# stays at caption size so the contrast does the work.
+KPI_VALUE_FONT_SIZE = Pt(40)
+# Timeline step detail sits under the shape, smaller than the step label.
+TIMELINE_DETAIL_FONT_SIZE = Pt(11)
+
 
 # =============================================================================
 # Bullet Indentation
