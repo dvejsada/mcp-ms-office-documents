@@ -214,6 +214,40 @@ class TestInlineFormattingPrecision:
         assert any(run.font.italic and run.text == "italic" for run in runs)
         assert any(run.font.name == "Courier New" and run.text == "code" for run in runs)
 
+    def test_italic_span_ending_in_bold(self):
+        """An italic whose last word is bold, with the closers touching.
+
+        The flanking rules first shipped here closed the italic branch on a
+        lookbehind, which a nested bold unit fails because it ends in '*'. The
+        outer italic was dropped and its asterisks rendered literally on the
+        slide. Reported in review of #101.
+        """
+        pres = build([{
+            "slide_type": "content",
+            "slide_title": "Nested",
+            "slide_text": [{"text": "*Remember, always **backup your data***", "indentation_level": 1}],
+        }])
+        paragraph = body_paragraphs(reload_presentation(pres).slides[0])[0]
+
+        assert "*" not in paragraph.text, f"stray asterisks rendered: {paragraph.text!r}"
+        assert paragraph.text == "Remember, always backup your data"
+        # Every run italic; the trailing phrase additionally bold.
+        assert all(run.font.italic for run in paragraph.runs)
+        assert any(run.font.bold and run.text == "backup your data" for run in paragraph.runs)
+
+    def test_italic_span_with_bold_not_touching_the_close(self):
+        """The neighbouring case that already worked must keep working."""
+        pres = build([{
+            "slide_type": "content",
+            "slide_title": "Nested",
+            "slide_text": [{"text": "*italic with **bold** inside*", "indentation_level": 1}],
+        }])
+        paragraph = body_paragraphs(reload_presentation(pres).slides[0])[0]
+
+        assert paragraph.text == "italic with bold inside"
+        assert all(run.font.italic for run in paragraph.runs)
+        assert any(run.font.bold and run.text == "bold" for run in paragraph.runs)
+
     def test_backticks_protect_a_dunder(self):
         """`__init__` in backticks renders verbatim rather than underlined."""
         pres = build([{

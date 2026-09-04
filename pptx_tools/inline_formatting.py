@@ -41,7 +41,15 @@ _INLINE_FORMAT_RE = re.compile(
     # __underline__
     r'|__(?=[^\s_]).+?(?<=[^\s_])__'
     # *italic* (allows nested **bold**)
-    r'|\*(?=[^\s*])(?:[^*]|\*\*[^*]+\*\*)+?(?<=[^\s*])\*'
+    #
+    # The other branches close on a lookbehind, but this one cannot: a nested
+    # **bold** unit ends in '*', so a lookbehind would reject an italic span
+    # whose last element is bold with nothing between the two closers
+    # ("*always **backup your data***") and the outer italic would be dropped,
+    # leaving stray asterisks on the slide. Instead the right flank is stated
+    # structurally: whatever is consumed last must itself be a valid flank —
+    # a non-space non-star character, or a complete nested bold unit.
+    r'|\*(?=[^\s*])(?:[^*]|\*\*[^*]+\*\*)*?(?:[^\s*]|\*\*[^*]+\*\*)\*'
     # `code`
     r'|`[^`]+`)'
 )
