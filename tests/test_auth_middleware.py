@@ -270,7 +270,7 @@ class TestOnRequest:
         # First failure triggers a WARNING which resets counter to 0
         # so after one reject the counter is 0 (just emitted warning)
         assert mw._failed_attempts == 0
-        assert mw._last_warn_time > 0
+        assert mw._last_warn_time is not None
 
     async def test_throttled_warning_not_emitted_within_interval(self):
         """WARNING should NOT fire again within the throttle window."""
@@ -300,8 +300,12 @@ class TestOnRequest:
         call_next = AsyncMock()
         context = _make_context()
 
-        # Pretend the last warning was long ago
-        mw._last_warn_time = 0.0
+        # Pretend the last warning was long ago. Anchor this to the current
+        # monotonic reading rather than hard-coding 0.0: monotonic counts from
+        # host boot, so on a freshly booted runner 0.0 is *within* the throttle
+        # window, not before it.
+        import time as _time
+        mw._last_warn_time = _time.monotonic() - mw._WARN_INTERVAL_SECONDS - 1
         mw._failed_attempts = 5  # accumulated silently
 
         with patch("middleware.get_http_headers", return_value={}), \
@@ -312,6 +316,29 @@ class TestOnRequest:
         # WARNING should have been emitted (interval elapsed)
         mock_logger.warning.assert_called_once()
         # Counter should reset after warning
+        assert mw._failed_attempts == 0
+
+    async def test_first_warning_emitted_on_a_freshly_booted_host(self):
+        """The first auth failure warns even seconds after boot.
+
+        time.monotonic() counts from host boot on Linux, so while a 0.0
+        sentinel was used for "never warned", `now - 0.0` stayed inside the
+        throttle window for the first minute of uptime and the very first
+        warning was swallowed — on a new pod, precisely when a misconfigured
+        client is most likely to be hammering it.
+        """
+        mw = ApiKeyAuthMiddleware("secret-123")
+        call_next = AsyncMock()
+        context = _make_context()
+
+        # Host booted 12 seconds ago, well inside _WARN_INTERVAL_SECONDS.
+        with patch("middleware.get_http_headers", return_value={"x-api-key": "wrong"}), \
+             patch("middleware.time.monotonic", return_value=12.0), \
+             patch("middleware.logger") as mock_logger:
+            with pytest.raises(AuthorizationError):
+                await mw.on_request(context, call_next)
+
+        mock_logger.warning.assert_called_once()
         assert mw._failed_attempts == 0
 
 
