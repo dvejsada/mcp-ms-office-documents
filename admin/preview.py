@@ -12,6 +12,7 @@ dynamic email tool's pystache rendering.
 from __future__ import annotations
 
 import io
+from pathlib import Path
 from typing import Any, Dict, List
 
 import pystache
@@ -71,6 +72,91 @@ def render_docx_preview(
     out = io.BytesIO()
     doc.save(out)
     return out.getvalue()
+
+
+# A fixed sample deck, rendered through whatever template is being previewed.
+# Chosen to exercise the layouts an admin actually needs to check: the title
+# layout, a section divider, bulleted content, a two-column split, a drawn slide
+# that uses no placeholder at all, and the closing slide. Six slides keeps the
+# preview quick to open and quick to scan; a longer deck buries the problem.
+SAMPLE_DECK = [
+    {
+        "type": "title",
+        "title": "Quarterly Business Review",
+        "subtitle": "Sample deck — rendered through this template",
+    },
+    {"type": "section", "title": "Where we stand"},
+    {
+        "type": "content",
+        "title": "Highlights",
+        "body": (
+            "- Revenue **ahead of plan** for the third quarter running\n"
+            "- Churn down to 18%, the lowest since launch\n"
+            "  - Enterprise renewals carried most of the improvement\n"
+            "- One risk: onboarding time is still climbing"
+        ),
+    },
+    {
+        "type": "two_column",
+        "title": "What worked, what did not",
+        "left": {"heading": "Worked", "body": "- Partner channel\n- Pricing change"},
+        "right": {"heading": "Did not", "body": "- Self-serve funnel\n- Support backlog"},
+    },
+    {
+        "type": "kpi",
+        "title": "At a glance",
+        "items": [
+            {"value": "€4.2M", "label": "ARR", "delta": "+12% vs Q2"},
+            {"value": "18%", "label": "Churn", "delta": "−3pp"},
+            {"value": "94", "label": "NPS"},
+        ],
+    },
+    {
+        "type": "closing",
+        "title": "Thank you",
+        "subtitle": "Questions welcome",
+        "contact": ["hello@example.com"],
+    },
+]
+
+
+def render_pptx_preview(
+    template_path,
+    spec: Dict[str, Any],
+    slides: List[Dict[str, Any]] = None,
+) -> tuple:
+    """Build the sample deck on a PowerPoint template; return ``(bytes, warnings)``.
+
+    Goes through :class:`~pptx_tools.slide_builder.PowerpointPresentation` with a
+    spec built from the submitted form, so the preview exercises the same layout
+    resolution, role mapping and defaults the live tool will use — including any
+    layout overrides the admin has just typed but not yet saved. The warnings
+    the builder produces are handed back, because "which slides could not be
+    laid out on this template" is the single most useful thing a preview can
+    tell an admin.
+    """
+    from pptx_tools.slide_builder import PowerpointPresentation
+    from pptx_tools.templates import TemplateSpec, aspect_of, open_template
+
+    path = Path(template_path)
+    aspect = aspect_of(open_template(path))
+
+    template_spec = TemplateSpec(
+        name=str(spec.get("name") or "preview"),
+        path=path,
+        description=str(spec.get("description") or ""),
+        layouts=dict(spec.get("layouts") or {}),
+        defaults=dict(spec.get("defaults") or {}),
+        strip_slides=bool(spec.get("strip_slides", True)),
+        aspect=aspect,
+    )
+
+    presentation = PowerpointPresentation(
+        slides if slides is not None else SAMPLE_DECK,
+        format=aspect,
+        template_spec=template_spec,
+    )
+    return presentation.save().getvalue(), list(presentation.warnings)
 
 
 def render_email_preview(

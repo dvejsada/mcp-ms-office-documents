@@ -110,5 +110,7 @@ def test_email_asset_extension_enforced():
 
 
 def test_unknown_kind_raises(store):
+    # "pptx" used to stand in for an unknown kind here; it is a supported kind
+    # now, so this needs one that genuinely is not.
     with pytest.raises(TemplateStoreError):
-        store.list_specs("pptx")
+        store.list_specs("keynote")

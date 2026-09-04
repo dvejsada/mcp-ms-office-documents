@@ -1,17 +1,24 @@
-"""Storage abstraction for UI-managed dynamic templates (docx + email).
+"""Storage abstraction for UI-managed dynamic templates (docx, email, pptx).
 
 The admin UI never edits the heavily-documented master YAML files
-(``config/docx_templates.yaml`` / ``config/email_templates.yaml``). Instead each
-UI-managed template is persisted as a **single file per template** in a sibling
-directory:
+(``config/docx_templates.yaml`` and friends). Instead each UI-managed template
+is persisted as a **single file per template** in a sibling directory:
 
     config/docx_templates.d/<name>.yaml      + custom_templates/<docx_path>
     config/email_templates.d/<name>.yaml     + custom_templates/<html_path>
+    config/pptx_templates.d/<name>.yaml      + custom_templates/<pptx_path>
 
 The loader (see :mod:`docx_tools.dynamic_docx_tools` /
-:mod:`email_tools.dynamic_email_tools`) merges these per-template files on top of
-the master YAML, so the master files stay pristine and UI edits produce clean,
-reviewable diffs.
+:mod:`email_tools.dynamic_email_tools` / :mod:`pptx_tools.templates`) merges
+these per-template files on top of the master YAML, so the master files stay
+pristine and UI edits produce clean, reviewable diffs.
+
+The three kinds share this storage but not their meaning. A docx or email
+template is a *parameterised document*: it declares ``args`` and becomes one
+MCP tool of its own. A pptx template is a *design* — layouts, theme, aspect —
+with no arguments at all; it becomes one more value for the ``template``
+argument of the single ``create_powerpoint_presentation`` tool. The store does
+not care about that difference, but the views do.
 
 Everything goes through the :class:`TemplateStore` interface. The default
 :class:`FileTemplateStore` reads/writes the mounted volume; a future
@@ -35,12 +42,30 @@ logger = logging.getLogger(__name__)
 # Supported template kinds.
 KIND_DOCX = "docx"
 KIND_EMAIL = "email"
+KIND_PPTX = "pptx"
 
-# Per-kind metadata: where managed spec files live, the asset extension, and the
-# spec key that names the asset file.
-_KIND_META: Dict[str, Dict[str, str]] = {
-    KIND_DOCX: {"subdir": "docx_templates.d", "asset_ext": ".docx", "path_key": "docx_path"},
-    KIND_EMAIL: {"subdir": "email_templates.d", "asset_ext": ".html", "path_key": "html_path"},
+# Per-kind metadata: where managed spec files live, the accepted asset
+# extensions, and the spec key that names the asset file. ``asset_ext`` is the
+# canonical extension (used when deriving a filename from the template name);
+# ``asset_exts`` is everything accepted on upload.
+#
+# PowerPoint is the only kind with more than one: a designer's brand deck
+# routinely arrives as a .potx, and pptx_tools.templates.open_template already
+# rewrites that content type in memory rather than rejecting it. Refusing the
+# upload here would put back the wall that code exists to remove.
+_KIND_META: Dict[str, Dict[str, Any]] = {
+    KIND_DOCX: {
+        "subdir": "docx_templates.d", "asset_ext": ".docx",
+        "asset_exts": (".docx",), "path_key": "docx_path",
+    },
+    KIND_EMAIL: {
+        "subdir": "email_templates.d", "asset_ext": ".html",
+        "asset_exts": (".html",), "path_key": "html_path",
+    },
+    KIND_PPTX: {
+        "subdir": "pptx_templates.d", "asset_ext": ".pptx",
+        "asset_exts": (".pptx", ".potx"), "path_key": "pptx_path",
+    },
 }
 
 # Tool names must be safe identifiers — they become MCP tool names and file
@@ -65,7 +90,17 @@ def valid_kind(kind: str) -> bool:
     return kind in _KIND_META
 
 
-def _require_kind(kind: str) -> Dict[str, str]:
+def kind_meta(kind: str) -> Dict[str, Any]:
+    """A copy of *kind*'s metadata: ``subdir``, ``asset_ext``, ``asset_exts``,
+    ``path_key``.
+
+    The views ask for this rather than carrying their own per-kind ternaries,
+    so adding a kind means editing one table.
+    """
+    return dict(_require_kind(kind))
+
+
+def _require_kind(kind: str) -> Dict[str, Any]:
     meta = _KIND_META.get(kind)
     if meta is None:
         raise TemplateStoreError(f"Unknown template kind: {kind!r}")
@@ -96,9 +131,10 @@ def validate_asset_filename(filename: str, kind: str) -> str:
         raise TemplateStoreError(
             f"Asset filename must be a bare filename (no directories); got {filename!r}."
         )
-    if p.suffix.lower() != meta["asset_ext"]:
+    accepted = meta["asset_exts"]
+    if p.suffix.lower() not in accepted:
         raise TemplateStoreError(
-            f"{kind} asset must end with {meta['asset_ext']}; got {filename!r}."
+            f"{kind} asset must end with {' or '.join(accepted)}; got {filename!r}."
         )
     return filename
 
