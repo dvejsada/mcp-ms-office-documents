@@ -7,7 +7,9 @@ awkward templates — reordered, trimmed, renamed, .potx — and assert on the
 layout each slide actually landed on.
 """
 
+import shutil
 import sys
+import time
 import zipfile
 from pathlib import Path
 
@@ -380,6 +382,24 @@ class TestHotReload:
         write_registry(registry["config"], [{"name": "brand", "pptx_path": "brand.pptx"}])
 
         assert [spec.name for spec in load_specs()] == ["brand"]
+
+    def test_a_template_replaced_in_place_is_reread(self, registry):
+        """Overwriting brand.pptx must invalidate, not just adding a file.
+
+        A directory's mtime changes when an entry is added or removed, but not
+        when an existing file's contents are replaced — which is how a template
+        actually gets updated. Without the per-file mtimes in the fingerprint,
+        the cached aspect ratio stayed at the old value and selection by aspect
+        then picked the wrong template.
+        """
+        shutil.copyfile(BASE_16_9, registry["custom"] / "brand.pptx")
+        write_registry(registry["config"], [{"name": "brand", "pptx_path": "brand.pptx"}])
+        assert load_specs()[0].aspect == "16:9"
+
+        time.sleep(0.01)
+        shutil.copyfile(BASE_4_3, registry["custom"] / "brand.pptx")
+
+        assert load_specs()[0].aspect == "4:3"
 
     def test_an_edited_registry_is_reread(self, registry):
         make_template(registry["custom"] / "brand.pptx")

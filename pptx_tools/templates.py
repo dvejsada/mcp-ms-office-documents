@@ -28,12 +28,18 @@ from typing import Any, Dict, List, Optional, Tuple
 from pptx import Presentation
 from pptx.util import Emu
 
+import template_utils
 from template_registry import gather_specs
 from template_utils import find_file_in_template_dirs
 
 from .constants import SLIDE_FORMAT_4_3, SLIDE_FORMAT_16_9
 
 logger = logging.getLogger(__name__)
+
+
+def candidate_template_dirs() -> List[Path]:
+    """The directories template resolution searches, in priority order."""
+    return list(template_utils._candidate_dirs())
 
 MASTER_YAML_NAME = "pptx_templates.yaml"
 SPEC_SUBDIR = "pptx_templates.d"
@@ -136,23 +142,35 @@ def aspect_of(presentation: Presentation) -> str:
 def _fingerprint() -> Tuple:
     """Cheap signature of everything that can change the registry.
 
-    Directory mtimes catch a template or spec file being added or removed;
-    the per-file mtimes catch one being edited in place. Comparing this on
-    each call is what replaces the process-lifetime cache, so dropping a new
-    template into the mounted volume takes effect without a restart.
+    Comparing this on each call is what replaces the process-lifetime cache,
+    so dropping a new template into the mounted volume takes effect without a
+    restart.
+
+    Directory mtimes alone are not enough. A directory's mtime changes when an
+    entry is added, removed or renamed — but *not* when an existing file's
+    contents are replaced, which is exactly how a template gets updated in
+    practice. Without the per-file mtimes below, overwriting brand.pptx with a
+    deck of a different slide size left the cached aspect ratio stale, and
+    selection by aspect then picked the wrong template.
     """
     parts: List[Tuple[str, Optional[int]]] = []
     cfg = config_dir()
-    watched: List[Path] = [
-        cfg,
-        cfg / MASTER_YAML_NAME,
-        cfg / SPEC_SUBDIR,
-        Path("/app/custom_templates"),
-        Path(__file__).resolve().parent.parent / "custom_templates",
-    ]
+    # Watch exactly the directories template resolution searches, rather than a
+    # hardcoded list: otherwise the watched set and the searched set can drift
+    # apart and an edit in a searched-but-unwatched directory goes unnoticed.
+    template_dirs = list(candidate_template_dirs())
+
+    watched: List[Path] = [cfg, cfg / MASTER_YAML_NAME, cfg / SPEC_SUBDIR]
+    watched.extend(template_dirs)
+
     spec_dir = cfg / SPEC_SUBDIR
     if spec_dir.is_dir():
         watched.extend(sorted(spec_dir.glob("*.yaml")))
+
+    for directory in template_dirs:
+        if directory.is_dir():
+            for pattern in ("*.pptx", "*.potx"):
+                watched.extend(sorted(directory.glob(pattern)))
 
     for item in watched:
         try:
