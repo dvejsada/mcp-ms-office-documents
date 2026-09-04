@@ -6,7 +6,7 @@ from pydantic import Field
 from xlsx_tools import _markdown_to_excel_buffer
 from docx_tools import _markdown_to_word_buffer
 from docx_tools.dynamic_docx_tools import register_docx_template_tools_from_yaml
-from pptx_tools import _create_presentation_buffer
+from pptx_tools import _create_presentation_buffer, Slides
 from email_tools import _create_eml_buffer
 from email_tools.dynamic_email_tools import register_email_template_tools_from_yaml
 from pathlib import Path
@@ -293,21 +293,32 @@ async def create_word_document(
     annotations={"title": "PowerPoint Presentation Creator"}
 )
 async def create_powerpoint_presentation(
-    slides: Annotated[List[dict], Field(
-        description="""List of slide objects. Each slide requires 'slide_type' (str) and type-specific fields:
-
-- title: {slide_type: "title", slide_title: str, subtitle?: str}  (subtitle can contain author name, tagline, date, etc.)
-- section: {slide_type: "section", slide_title: str}
-- content: {slide_type: "content", slide_title: str, slide_text: [{text: str, indentation_level: int (1-3)}]}
-- table: {slide_type: "table", slide_title: str, table_data: [[str|number|null]] (first row = header; optional second row with :---|:---:|---: for left/center/right column alignment), header_color?: str (6-digit hex, with or without '#'), alternate_rows?: bool}
-- image: {slide_type: "image", slide_title?: str, image_url: str, image_caption?: str}
-- two_column: {slide_type: "two_column", slide_title: str, left_column: [{text: str, indentation_level: int}], right_column: [{text: str, indentation_level: int}], left_heading?: str, right_heading?: str}
-- chart: {slide_type: "chart", slide_title: str, chart_type: str (bar|bar_stacked|column|column_stacked|line|line_markers|pie|doughnut|area|area_stacked|radar), chart_data: {categories: [str], series: [{name: str, values: [number]}]}, has_legend?: bool, legend_position?: str}
-- quote: {slide_type: "quote", slide_title?: str, quote_text: str, quote_author?: str}
-
-All slides support optional 'speaker_notes': str field. An unrecognised slide_type is rejected with an error listing the valid types — it is never skipped silently.
-
-Inline markdown formatting is supported in text fields (slide_text, quote_text, left_column, right_column): **bold**, *italic*, ***bold italic***, ~~strikethrough~~, __underline__, `code`. A marker only formats when it hugs its text (**bold**, not ** bold **), so ordinary prose such as "5 * 3 * 2" is left alone. Escape a literal marker with a backslash (\\*), or wrap it in backticks to render it verbatim."""
+    slides: Annotated[Slides, Field(
+        description=(
+            "Ordered list of slides. Each slide's 'type' selects its shape; the schema for "
+            "every type is given above, so only the rules it cannot express are repeated here.\n"
+            "\n"
+            "BODY TEXT ('body' on content slides and on each side of two_column): either a markdown "
+            "bullet string or explicit bullet objects. Prefer the string — write '- item' per line and "
+            "indent child items to nest them (any consistent unit: 2 spaces, 4 spaces or a tab). "
+            "A line with no '-' marker becomes a top-level bullet.\n"
+            "\n"
+            "INLINE MARKDOWN in any text field: **bold**, *italic*, ***bold italic***, ~~strikethrough~~, "
+            "__underline__, `code`. A marker formats only when it hugs its text (**bold**, not ** bold **), "
+            "so prose such as '5 * 3 * 2' is left alone. Escape a literal marker with a backslash (\\*) or "
+            "wrap it in backticks.\n"
+            "\n"
+            "COLOURS: 6-digit hex with or without '#', or a theme name (accent1..accent6, dark1, dark2, "
+            "light1, light2). Prefer a theme name so the deck follows the template's palette.\n"
+            "\n"
+            "IMAGES: 'source' takes an https URL or an inline data URI (data:image/png;base64,...).\n"
+            "\n"
+            "CHARTS: use the 'chart' type for category charts and the 'scatter' type for XY data "
+            "([x, y] point pairs). Keep each series' 'values' the same length as 'categories'.\n"
+            "\n"
+            "Text that overflows its slide is shrunk to fit and reported in the result's 'warnings'; "
+            "split the content across slides rather than relying on that."
+        )
     )],
     format: Annotated[Literal["4:3", "16:9"], Field(
         default="16:9",
@@ -316,28 +327,32 @@ Inline markdown formatting is supported in text fields (slide_text, quote_text, 
     author: Annotated[Optional[str], Field(description="Author name stored in document properties/metadata.", default=None)] = None,
     footer_text: Annotated[Optional[str], Field(description="Footer text displayed on every slide (e.g., company name, confidentiality notice).", default=None)] = None,
     show_slide_numbers: Annotated[bool, Field(description="Show slide numbers on every slide.", default=False)] = False,
+    language: Annotated[Optional[str], Field(description="Language tag for proofing in PowerPoint (e.g. 'cs-CZ' for Czech, 'en-US' for English, 'de-DE' for German). Set this when the deck is not in the template's own language, otherwise every word is flagged as a misspelling.", default=None)] = None,
     file_name: Annotated[Optional[str], Field(description="Custom filename for the output file (without extension). If not provided, a unique identifier will be used.", default=None)] = None,
     add_unique_prefix: Annotated[Optional[bool], Field(description="If true, adds 8-char UUID prefix to filename for uniqueness. If not set, defaults to True for traditional storage backends (LOCAL/S3/GCS/AZURE/MINIO) and False for LibreChat.", default=None)] = None,
 ) -> Union[str, dict]:
     """Creates PowerPoint presentations with structured slide models and professional templates.
 
     Returns:
-        For traditional upload strategies: URL string
-        For LIBRECHAT strategy: MCP file artifact dict
+        For traditional upload strategies: a dict with the file location,
+        slide_count and any warnings (a bare URL string when there is nothing
+        to report, preserving the previous response shape).
+        For LIBRECHAT strategy: MCP file artifact dict.
     """
 
     logger.info(f"Creating PowerPoint presentation with {len(slides)} slides in {format} format")
 
     try:
         # Generate presentation buffer
-        file_buffer = await run_blocking(
+        file_buffer, warnings = await run_blocking(
             _create_presentation_buffer,
             slides, format,
             author=author,
             footer_text=footer_text,
             show_slide_numbers=show_slide_numbers,
+            language=language,
         )
-        
+
         # Upload and format response (handles both LIBRECHAT and traditional backends)
         user_context = extract_user_context_from_request()
         result = await upload_and_format_response(
@@ -349,9 +364,26 @@ Inline markdown formatting is supported in text fields (slide_text, quote_text, 
             add_unique_prefix=add_unique_prefix,
         )
         file_buffer.close()
-        
+
         logger.info("PowerPoint presentation created successfully")
+
+        # Warnings describe a deck that was produced but not exactly as asked
+        # (an image that would not load, text shrunk to fit, a dropped footer).
+        # They ride alongside the result so the model can correct its next call
+        # instead of the problem living only in the server log.
+        if warnings and isinstance(result, str):
+            return {
+                "file": result,
+                "slide_count": len(slides),
+                "warnings": warnings,
+            }
+        if warnings and isinstance(result, dict):
+            result = {**result, "warnings": warnings}
         return result
+    except ValueError as e:
+        # Schema/validation problems: the message names the slide and field.
+        logger.error(f"Invalid presentation input: {e}")
+        raise ToolError(str(e))
     except Exception as e:
         logger.error(f"Error creating PowerPoint presentation: {e}", exc_info=True)
         raise ToolError(f"Error creating PowerPoint presentation: {e}")

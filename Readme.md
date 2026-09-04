@@ -41,7 +41,7 @@ Just ask your AI to _"create a sales presentation"_ or _"draft a welcome email"_
 
 | Document Type | Tool | Highlights |
 |:---:|---|---|
-| 📊 **PowerPoint** | `create_powerpoint_presentation` | Title, section & content slides · 4:3 or 16:9 format · Custom templates · Author metadata, footer text & slide numbers · Inline markdown (**bold**, *italic*, ~~strikethrough~~, `code`) · Table column alignment |
+| 📊 **PowerPoint** | `create_powerpoint_presentation` | Typed slide schema (9 slide types) · Markdown bullet bodies · Tables, category charts & XY scatter · Inline & data-URI images · Theme colours · Autofit with overflow warnings · Proofing language · 4:3 or 16:9 · Custom templates |
 | 📝 **Word** | `create_word_from_markdown` | Write in Markdown, get a `.docx` · Headings, lists (with auto-restart), tables, links, images, block quotes, page breaks & text alignment · Superscript, subscript, underline & highlighted text · Table column alignment, borderless tables, proportional widths & multi-paragraph cells · Headers/footers with page numbers · Table of Contents · Custom style mapping & per-block style tags |
 | 📈 **Excel** | `create_excel_from_markdown` | Markdown tables → `.xlsx` · Multiple sheets · Formulas with table-relative & cross-sheet references · Column data types · Freeze panes & auto-filter · Column alignment |
 | 📧 **Email** | `create_email_draft` | HTML email drafts (`.eml`) · Subject, recipients, priority, language |
@@ -267,9 +267,76 @@ Set `RUN_BLOCKING_BY_ASYNCIO_THREAD_ENABLED=false` only for local debugging or t
 
 ## 📝 Markdown Reference
 
-Both the Word and Excel tools accept Markdown. These references cover **everything** the parsers understand — including features that are easy to miss.
+The Word and Excel tools accept Markdown documents; the PowerPoint tool takes structured slides whose text fields accept Markdown. These references cover **everything** the parsers understand — including features that are easy to miss.
 
 > **Golden rule:** separate every block element (heading, list, table, quote…) with a **blank line**.
+
+<details>
+<summary><strong>📊 PowerPoint slides — full schema</strong></summary>
+
+**Tool parameters** (`create_powerpoint_presentation`):
+
+| Parameter | Description |
+|-----------|-------------|
+| `slides` | Ordered list of slide objects (below). Required. |
+| `format` | `16:9` (default) or `4:3`. |
+| `author` | Stored in document properties. |
+| `footer_text` | Shown on every slide whose layout has a footer placeholder. |
+| `show_slide_numbers` | Slide numbers on every slide. |
+| `language` | BCP-47 proofing tag, e.g. `cs-CZ`. Set it when the deck is not in the template's language, or Word/PowerPoint flags every word as misspelled. |
+| `file_name` | Output filename without extension. |
+
+Every slide takes `type` plus optional `title`, `notes` (speaker notes) and `layout`.
+
+| `type` | Fields |
+|--------|--------|
+| `title` | `subtitle?` |
+| `section` | — |
+| `content` | `body` |
+| `two_column` | `left`, `right` — each `{heading?, body}` |
+| `table` | `rows`, `align?`, `header_color?`, `zebra?`, `font_size?` |
+| `chart` | `chart_type`, `categories`, `series`, `legend?`, `data_labels?`, `number_format?`, `chart_title?`, `x_title?`, `y_title?` |
+| `scatter` | `series` (`{name, points: [[x, y], …]}`), `legend?`, `chart_title?`, `x_title?`, `y_title?` |
+| `image` | `source`, `caption?` |
+| `quote` | `text`, `attribution?` |
+
+**Body text.** `body` takes either a Markdown bullet string or explicit bullet objects. Prefer the string:
+
+```json
+{"type": "content", "title": "Q3 results",
+ "body": "- Revenue **up 12%**\n  - EMEA +18%\n  - APAC +4%\n- Churn flat"}
+```
+
+Indent child items with any consistent unit — two spaces, four spaces or a tab. A line without a `-` marker becomes a top-level bullet. The explicit form is `[{"text": "…", "level": 2}]`, where `level` is 1 (outermost) to 5.
+
+**Inline formatting** works in every text field: `**bold**`, `*italic*`, `***bold italic***`, `~~strikethrough~~`, `__underline__`, `` `code` ``. A marker only formats when it hugs its text (`**bold**`, not `** bold **`), so prose like `5 * 3 * 2 = 30` is left alone. Escape a literal marker with `\*`, or wrap it in backticks.
+
+**Tables** take raw values — numbers and `null` are fine, not just strings:
+
+```json
+{"type": "table", "title": "Pricing",
+ "rows": [["Plan", "Users", "Price"], ["Basic", 5, 9.0], ["Pro", 25, 29.0]],
+ "align": ["left", "right", "right"], "header_color": "accent1"}
+```
+
+**Colours** accept 6-digit hex with or without `#`, or a theme name (`accent1`…`accent6`, `dark1`, `dark2`, `light1`, `light2`). Prefer a theme name so the deck follows your template's palette.
+
+**Images** take an https URL or an inline data URI, so an image you already hold can be placed without publishing it first:
+
+```json
+{"type": "image", "source": "data:image/png;base64,iVBORw0KGgo…", "caption": "Fig 1"}
+```
+
+**Warnings.** When the deck is produced but not exactly as asked — an image that would not load, body text shrunk to fit, a footer dropped because the layout has no placeholder — the result carries a `warnings` list alongside the file instead of leaving it in the server log:
+
+```json
+{"file": "https://…/deck.pptx", "slide_count": 12,
+ "warnings": ["slide 4: body text is about 1.9x the space available and will be shrunk to fit; consider splitting it across slides."]}
+```
+
+**Compatibility.** The previous key names (`slide_type`, `slide_title`, `slide_text`, `indentation_level`, `speaker_notes`, `table_data`, `alternate_rows`, `image_url`, `image_caption`, `quote_text`, `quote_author`, `left_column`, `right_column`, `chart_data`, `has_legend`, `legend_position`) are still accepted and mapped onto the current ones, with a note in the log. They will be removed in a future release.
+
+</details>
 
 <details>
 <summary><strong>📝 Word Markdown — full syntax</strong></summary>

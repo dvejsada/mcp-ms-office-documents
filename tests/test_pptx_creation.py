@@ -507,17 +507,9 @@ class TestImageSlides:
         path = save_presentation(pres, "23_image_placeholder.pptx")
         assert path.exists()
 
-    def test_image_slide_no_url(self):
-        """Test image slide without URL."""
-        slides = [
-            {
-                "slide_type": "image",
-                "slide_title": "Image Slide (No URL)"
-            }
-        ]
-        pres = PowerpointPresentation(slides, "16:9")
-        path = save_presentation(pres, "24_image_no_url.pptx")
-        assert path.exists()
+    # test_image_slide_no_url moved to test_pptx_schema.py: an image slide with
+    # no source is now rejected by the schema rather than producing an empty
+    # slide, and asserting that needs no network access.
 
 
 

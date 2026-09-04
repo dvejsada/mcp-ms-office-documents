@@ -285,15 +285,23 @@ class TestBufferFunctions:
         result.close()
 
     def test_create_presentation_buffer(self):
-        """Test _create_presentation_buffer returns BytesIO."""
+        """_create_presentation_buffer returns (BytesIO, warnings).
+
+        Unlike the other _create_*_buffer helpers it returns a pair: the
+        PowerPoint builder reports what it had to work around (an image that
+        would not load, text shrunk to fit) and the caller passes that back to
+        the model rather than leaving it in the server log.
+        """
         from pptx_tools import _create_presentation_buffer
 
         slides = [
             {"slide_type": "title", "slide_title": "Test Presentation", "subtitle": "Test"}
         ]
-        result = _create_presentation_buffer(slides)
+        result, warnings = _create_presentation_buffer(slides)
 
         assert isinstance(result, io.BytesIO)
+        assert isinstance(warnings, list)
+        assert warnings == []
         assert result.tell() == 0
         content = result.read()
         assert len(content) > 0
