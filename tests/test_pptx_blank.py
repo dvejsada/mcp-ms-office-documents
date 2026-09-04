@@ -103,6 +103,17 @@ class TestValidationAgainstSlideSize:
         assert len(shapes_of(slide, MSO_SHAPE_TYPE.TEXT_BOX)) == 1
         assert any("starts off the slide; skipped" in w for w in pres.warnings)
 
+    @pytest.mark.parametrize("element, kind", [
+        ({"kind": "text", "text": "x", "x": 1, "y": 1, "w": 0}, MSO_SHAPE_TYPE.TEXT_BOX),
+        ({"kind": "shape", "x": 1, "y": 1, "w": 2, "h": "0%"}, MSO_SHAPE_TYPE.AUTO_SHAPE),
+        ({"kind": "image", "source": PNG_DATA_URI, "x": 1, "y": 1, "w": 0, "h": 1}, MSO_SHAPE_TYPE.PICTURE),
+    ])
+    def test_a_zero_size_element_is_skipped_and_reported(self, element, kind):
+        """A 0-wide box or a 1-EMU picture draws nothing and, before this, said nothing."""
+        pres, slide = build([element])
+        assert shapes_of(slide, kind) == []
+        assert any("has no size; skipped" in w for w in pres.warnings)
+
     def test_nothing_is_reported_when_everything_fits(self):
         pres, _ = build([{"kind": "shape", "x": "10%", "y": "10%", "w": "80%", "h": "80%"}])
         assert pres.warnings == []

@@ -928,6 +928,12 @@ class PowerpointPresentation(SlideHelpers):
                     f"element {number} ({element.kind}) ran past the slide edge; "
                     f"{' and '.join(reduced)} reduced to fit.",
                 )
+            # Clamping cannot reach zero — the off-slide skip above fires first —
+            # so a zero here is what the caller asked for: a 0-wide text box or
+            # a 1-EMU picture that draws nothing and says nothing.
+            if width <= 0 or height <= 0:
+                self._warn(index, f"element {number} ({element.kind}) has no size; skipped.")
+                continue
 
             if element.kind == "text":
                 box = slide.shapes.add_textbox(left, top, width, height)
