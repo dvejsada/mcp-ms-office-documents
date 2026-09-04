@@ -21,6 +21,7 @@ from pptx.util import Emu
 
 from pptx_tools.helpers import body_to_bullets, estimate_text_fill, fit_table_font_size
 from pptx_tools.image_utils import ImageValidationError, decode_data_uri, is_data_uri
+from pptx_tools.chart_utils import ChartDataError
 from pptx_tools.schema import (
     Bullet, ContentSlide, SLIDE_TYPES, _SLIDES_ADAPTER, coerce_slides,
 )
@@ -172,6 +173,31 @@ class TestLegacyKeys:
         }])[0]
         assert slide.legend == "none"
 
+    def test_contradictory_legend_keys_keep_the_old_precedence_and_are_logged(self):
+        """has_legend=false wins over legend_position, as the old renderer did.
+
+        The loser must still be recorded, or the deprecation log claims to
+        have accepted a key whose value it discarded.
+        """
+        from pptx_tools.schema import migrate_legacy_slide
+
+        seen = set()
+        out = migrate_legacy_slide({
+            "slide_type": "chart", "chart_type": "pie",
+            "chart_data": {"categories": ["a"], "series": [{"name": "s", "values": [1]}]},
+            "has_legend": False, "legend_position": "top",
+        }, seen)
+
+        assert out["legend"] == "none"
+        assert "has_legend" in seen
+        assert "legend_position" in seen
+
+    def test_new_style_key_wins_over_its_legacy_spelling(self):
+        slide = coerce_slides([{
+            "slide_type": "section", "slide_title": "old", "title": "new",
+        }])[0]
+        assert slide.title == "new"
+
     def test_out_of_range_level_is_clamped_not_rejected(self):
         """Phase 0 clamped these; the typed schema must not turn it into an error."""
         slide = coerce_slides([{
@@ -270,6 +296,34 @@ class TestCharts:
         }])
         chart = [s.chart for s in reload_presentation(pres).slides[0].shapes if s.has_chart][0]
         assert len(chart.plots[0].series) == 2
+
+    def test_empty_series_name_is_kept_not_treated_as_missing(self):
+        """`getattr(...) or ...` could not tell "absent" from "empty string"."""
+        from pptx_tools.chart_utils import _series_field
+        from pptx_tools.schema import XySeries
+
+        assert _series_field(XySeries(name="", points=[[1, 2]]), "name") == ""
+        assert _series_field({"name": "", "points": [[1, 2]]}, "name") == ""
+        assert _series_field(XySeries(name="s", points=[[1, 2]]), "missing") is None
+
+    def test_scatter_series_without_a_name_is_reported(self):
+        from pptx_tools.chart_utils import add_scatter_to_slide
+
+        pres = build([{"type": "title", "title": "T"}])
+        slide = pres.presentation.slides[0]
+        with pytest.raises(ChartDataError, match="no name"):
+            add_scatter_to_slide(slide, [{"points": [[1, 2]]}], 0, 0, 100, 100)
+
+    def test_scatter_accepts_plain_dict_series(self):
+        """The library entry point is exported, so the dict path must work."""
+        from pptx_tools.chart_utils import add_scatter_to_slide
+
+        pres = build([{"type": "title", "title": "T"}])
+        slide = pres.presentation.slides[0]
+        chart = add_scatter_to_slide(
+            slide, [{"name": "d", "points": [[1, 2], [3, 4]]}], 0, 0, 4000000, 3000000
+        )
+        assert len(chart.plots[0].series) == 1
 
     def test_data_labels_and_number_format(self):
         pres = build([{

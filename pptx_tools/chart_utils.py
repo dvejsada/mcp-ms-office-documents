@@ -244,6 +244,20 @@ def set_axis_titles(chart, x_title: Optional[str] = None, y_title: Optional[str]
             logger.debug("Chart type has no %s; skipping its title", axis_name)
 
 
+def _series_field(entry, field: str):
+    """Read *field* from a model attribute or a mapping key.
+
+    Written out rather than expressed as ``getattr(...) or entry.get(...)``:
+    that idiom cannot tell "absent" from "present but falsy", so a legal
+    empty-string series name resolved to None. It is a narrow case — the
+    rendered legend entry came out the same either way — but it is the kind of
+    thing duck typing hides until it matters.
+    """
+    if isinstance(entry, dict):
+        return entry.get(field)
+    return getattr(entry, field, None)
+
+
 def add_scatter_to_slide(
     slide,
     series: list,
@@ -270,11 +284,12 @@ def add_scatter_to_slide(
         raise ChartDataError("Scatter chart needs at least one series")
 
     data = XyChartData()
-    for entry in series:
-        name = getattr(entry, "name", None) or (entry.get("name") if isinstance(entry, dict) else None)
-        points = getattr(entry, "points", None)
-        if points is None and isinstance(entry, dict):
-            points = entry.get("points")
+    for i, entry in enumerate(series):
+        name = _series_field(entry, "name")
+        points = _series_field(entry, "points")
+
+        if name is None:
+            raise ChartDataError(f"Scatter series {i} has no name")
         if not points:
             raise ChartDataError(f"Scatter series {name!r} has no points")
 

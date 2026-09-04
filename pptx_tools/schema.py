@@ -365,6 +365,12 @@ def migrate_legacy_slide(slide: Any, seen: Optional[set] = None) -> Any:
         legend_position = out.pop("legend_position", None)
         if has_legend is False:
             used_legacy.append("has_legend")
+            # Contradictory input: "no legend" plus a position for it. The old
+            # renderer tested has_legend first and never read the position, so
+            # keep that precedence — but record the key that lost, or the
+            # deprecation log claims to have accepted something it discarded.
+            if legend_position:
+                used_legacy.append("legend_position")
             out.setdefault("legend", "none")
         elif legend_position:
             used_legacy.append("legend_position")
