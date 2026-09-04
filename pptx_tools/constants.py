@@ -44,6 +44,20 @@ DEFAULT_BODY_FONT_SIZE = Pt(18)
 DEFAULT_CAPTION_FONT_SIZE = Pt(14)
 DEFAULT_QUOTE_FONT_SIZE = Pt(28)
 
+# KPI figures are meant to read from the back of a room; the label beside them
+# stays at caption size so the contrast does the work.
+KPI_VALUE_FONT_SIZE = Pt(40)
+# Timeline step detail sits under the shape, smaller than the step label.
+TIMELINE_DETAIL_FONT_SIZE = Pt(11)
+
+# Timeline step geometry. The detail band is reserved out of the content
+# rectangle *before* the shapes are sized, so a short content box shrinks the
+# chevrons rather than pushing the detail lines out past the bottom of the box.
+TIMELINE_STEP_HEIGHT = Inches(1.1)
+TIMELINE_STEP_MIN_HEIGHT = Inches(0.3)
+TIMELINE_DETAIL_GAP = Inches(0.1)
+TIMELINE_DETAIL_HEIGHT = Inches(0.8)
+
 
 # =============================================================================
 # Bullet Indentation

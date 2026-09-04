@@ -69,6 +69,11 @@ ROLE_FALLBACK_INDEX = {
 # :func:`role_for_slide` rather than listed here.
 SLIDE_TYPE_ROLE = {
     "title": ROLE_TITLE,
+    # Slide types that draw their own shapes want a clear canvas with a title.
+    "kpi": ROLE_TITLE_ONLY,
+    "timeline": ROLE_TITLE_ONLY,
+    "agenda": ROLE_CONTENT,
+    "closing": ROLE_TITLE,
     "section": ROLE_SECTION,
     "content": ROLE_CONTENT,
     "table": ROLE_CONTENT,
@@ -186,6 +191,11 @@ def role_for_slide(slide) -> str:
     if slide.type == "two_column":
         has_headings = bool(slide.left.heading or slide.right.heading)
         return ROLE_COMPARISON if has_headings else ROLE_TWO_COLUMN
+    if slide.type == "quote" and not slide.title:
+        # An untitled quote on a titled layout leaves an empty title
+        # placeholder sitting above it, which shows as "Click to add title"
+        # the moment anyone opens the deck to edit it.
+        return ROLE_BLANK
     return SLIDE_TYPE_ROLE.get(slide.type, ROLE_CONTENT)
 
 

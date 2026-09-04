@@ -41,7 +41,7 @@ Just ask your AI to _"create a sales presentation"_ or _"draft a welcome email"_
 
 | Document Type | Tool | Highlights |
 |:---:|---|---|
-| 📊 **PowerPoint** | `create_powerpoint_presentation` | Typed slide schema (9 slide types) · Markdown bullet bodies · Tables, category charts & XY scatter · Inline & data-URI images · Theme colours · Autofit with overflow warnings · Proofing language · 4:3 or 16:9 · Custom templates |
+| 📊 **PowerPoint** | `create_powerpoint_presentation` | Typed slide schema (13 slide types incl. KPI, timeline, agenda) · Markdown bullet bodies · Tables, category charts & XY scatter · Inline & data-URI images · Theme colours · Autofit with overflow warnings · Proofing language · 4:3 or 16:9 · Custom templates |
 | 📝 **Word** | `create_word_from_markdown` | Write in Markdown, get a `.docx` · Headings, lists (with auto-restart), tables, links, images, block quotes, page breaks & text alignment · Superscript, subscript, underline & highlighted text · Table column alignment, borderless tables, proportional widths & multi-paragraph cells · Headers/footers with page numbers · Table of Contents · Custom style mapping & per-block style tags |
 | 📈 **Excel** | `create_excel_from_markdown` | Markdown tables → `.xlsx` · Multiple sheets · Formulas with table-relative & cross-sheet references · Column data types · Freeze panes & auto-filter · Column alignment |
 | 📧 **Email** | `create_email_draft` | HTML email drafts (`.eml`) · Subject, recipients, priority, language |
@@ -297,8 +297,12 @@ Every slide takes `type` plus optional `title`, `notes` (speaker notes) and `lay
 | `table` | `rows`, `align?`, `header_color?`, `zebra?`, `font_size?` |
 | `chart` | `chart_type`, `categories`, `series`, `legend?`, `data_labels?`, `number_format?`, `chart_title?`, `x_title?`, `y_title?` |
 | `scatter` | `series` (`{name, points: [[x, y], …]}`), `legend?`, `chart_title?`, `x_title?`, `y_title?` |
-| `image` | `source`, `caption?` |
+| `image` | `source`, `caption?`, `body?` |
 | `quote` | `text`, `attribution?` |
+| `kpi` | `items` (`{value, label, delta?}`), 2–4 read best |
+| `timeline` | `steps` (`{label, detail?}`), `style?` (`chevron` or `box`) |
+| `agenda` | `items?` — omit to build it from the deck's own `section` slides |
+| `closing` | `subtitle?`, `contact?` |
 
 **Body text.** `body` takes either a Markdown bullet string or explicit bullet objects. Prefer the string:
 
@@ -309,9 +313,15 @@ Every slide takes `type` plus optional `title`, `notes` (speaker notes) and `lay
 
 Indent child items with any consistent unit — two spaces, four spaces or a tab. A line without a `-` marker becomes a top-level bullet. The explicit form is `[{"text": "…", "level": 2}]`, where `level` is 1 (outermost) to 5.
 
-**Inline formatting** works in every text field: `**bold**`, `*italic*`, `***bold italic***`, `~~strikethrough~~`, `__underline__`, `` `code` ``. A marker only formats when it hugs its text (`**bold**`, not `** bold **`), so prose like `5 * 3 * 2 = 30` is left alone. Escape a literal marker with `\*`, or wrap it in backticks.
+**Inline formatting** works in every text field, table cells included: `**bold**`, `*italic*`, `***bold italic***`, `~~strikethrough~~`, `__underline__`, `` `code` ``, and `[links](https://example.com)`. A marker only formats when it hugs its text (`**bold**`, not `** bold **`), so prose like `5 * 3 * 2 = 30` is left alone. Escape a literal marker with `\*`, or wrap it in backticks.
 
 **Tables** take raw values — numbers and `null` are fine, not just strings:
+
+```json
+{"type": "kpi", "title": "At a glance",
+ "items": [{"value": "€4.2M", "label": "ARR", "delta": "+12% vs Q2"},
+           {"value": "18%", "label": "Churn"}]}
+```
 
 ```json
 {"type": "table", "title": "Pricing",

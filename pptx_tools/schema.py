@@ -124,6 +124,28 @@ class Column(BaseModel):
     body: Body = Field(default_factory=list, description="Markdown bullets, or explicit bullet objects.")
 
 
+class Kpi(BaseModel):
+    """One headline figure on a KPI slide."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    value: str = Field(description="The figure itself, e.g. '€4.2M' or '18%'. Kept as text so units and symbols survive.")
+    label: str = Field(description="What the figure measures, e.g. 'ARR' or 'Churn'.")
+    delta: Optional[str] = Field(
+        default=None,
+        description="Optional change, e.g. '+12% vs Q2'. Rendered in the accent colour.",
+    )
+
+
+class Step(BaseModel):
+    """One step of a timeline or process slide."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    label: str = Field(description="Short step name, e.g. 'Discovery' or 'Q1'.")
+    detail: Optional[str] = Field(default=None, description="One line of detail under the label.")
+
+
 class Series(BaseModel):
     """One data series of a category chart."""
 
@@ -198,6 +220,10 @@ class TableSlide(SlideBase):
 
 class ChartSlide(SlideBase):
     type: Literal["chart"]
+    body: Optional[Body] = Field(
+        default=None,
+        description="Optional takeaways placed beside the chart, which is then drawn at half width.",
+    )
     chart_type: Literal[
         "bar", "bar_stacked", "column", "column_stacked",
         "line", "line_markers", "pie", "doughnut",
@@ -232,12 +258,54 @@ class ImageSlide(SlideBase):
         description="Image https URL, or a data URI (data:image/png;base64,...)."
     )
     caption: Optional[str] = Field(default=None, description="Caption under the image.")
+    body: Optional[Body] = Field(
+        default=None,
+        description="Optional text beside the picture, which is then drawn at half width.",
+    )
 
 
 class TwoColumnSlide(SlideBase):
     type: Literal["two_column"]
     left: Column = Field(default_factory=Column, description="Left column.")
     right: Column = Field(default_factory=Column, description="Right column.")
+
+
+class KpiSlide(SlideBase):
+    type: Literal["kpi"]
+    items: List[Kpi] = Field(
+        min_length=1, max_length=6,
+        description="Two to four figures read best; more than six will not fit.",
+    )
+
+
+class AgendaSlide(SlideBase):
+    type: Literal["agenda"]
+    items: Optional[List[str]] = Field(
+        default=None,
+        description=(
+            "Agenda entries. Omit to generate them from the deck's own section "
+            "slides, in order — the usual case, and it cannot drift from the deck."
+        ),
+    )
+
+
+class ClosingSlide(SlideBase):
+    type: Literal["closing"]
+    subtitle: Optional[str] = Field(default=None, description="Line under the closing title.")
+    contact: Optional[List[str]] = Field(
+        default=None, description="Contact lines, e.g. a name, an email, a phone number."
+    )
+
+
+class TimelineSlide(SlideBase):
+    type: Literal["timeline"]
+    steps: List[Step] = Field(
+        min_length=2, max_length=6,
+        description="Three to five steps read best; more than six will not fit across the slide.",
+    )
+    style: Literal["chevron", "box"] = Field(
+        default="chevron", description="Chevrons imply sequence; boxes imply parallel items."
+    )
 
 
 class QuoteSlide(SlideBase):
@@ -249,6 +317,7 @@ class QuoteSlide(SlideBase):
 _SLIDE_MODELS = (
     TitleSlide, SectionSlide, ContentSlide, TableSlide,
     ChartSlide, ScatterSlide, ImageSlide, TwoColumnSlide, QuoteSlide,
+    KpiSlide, AgendaSlide, ClosingSlide, TimelineSlide,
 )
 
 SLIDE_TYPES = tuple(sorted(m.model_fields["type"].annotation.__args__[0] for m in _SLIDE_MODELS))
@@ -257,6 +326,7 @@ AnySlide = Annotated[
     Union[
         TitleSlide, SectionSlide, ContentSlide, TableSlide,
         ChartSlide, ScatterSlide, ImageSlide, TwoColumnSlide, QuoteSlide,
+        KpiSlide, AgendaSlide, ClosingSlide, TimelineSlide,
     ],
     Field(discriminator="type"),
 ]
