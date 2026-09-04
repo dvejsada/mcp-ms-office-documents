@@ -16,6 +16,7 @@ tested on its own.
 from __future__ import annotations
 
 import io
+import logging
 import re
 import tempfile
 from dataclasses import dataclass, field
@@ -28,6 +29,8 @@ from lxml import etree
 
 from docx_tools.dynamic_docx_tools import PLACEHOLDER_PATTERN
 from docx_tools.conditionals import parse_marker
+
+logger = logging.getLogger(__name__)
 
 # Styles the markdown renderer applies by name; warn when a template lacks them.
 REQUIRED_DOCX_STYLES = [
@@ -358,6 +361,17 @@ def _read_theme(presentation) -> tuple:
             sys_clr = node.find(pptx_qn("a:sysClr"))
             if sys_clr is not None and sys_clr.get("lastClr"):
                 colors[name] = f"#{sys_clr.get('lastClr').upper()}"
+                continue
+            # OOXML also permits scrgbClr, hslClr, prstClr and schemeClr here.
+            # Office writes only srgbClr and sysClr, so the others are not worth
+            # converting — but say so rather than dropping the entry in silence,
+            # which is the failure mode this whole reader was written to avoid.
+            if len(node):
+                logger.info(
+                    "[template-analysis] Theme colour %r uses <%s>, which is not "
+                    "one of srgbClr/sysClr; omitted from the reported palette.",
+                    name, etree.QName(node[0]).localname,
+                )
     return fonts, colors
 
 

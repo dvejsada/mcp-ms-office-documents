@@ -19,13 +19,14 @@ sys.path.insert(0, str(project_root))
 import pytest
 from pptx import Presentation as PptxReader
 from pptx.oxml.ns import qn as pptx_qn
+from lxml import etree
 from starlette.testclient import TestClient
 
 import admin.store as store_mod
 import metrics
 import pptx_tools.templates as templates_mod
 import template_utils as tu
-from admin.analysis import PptxAnalysis, analyze, analyze_pptx
+from admin.analysis import PptxAnalysis, _read_theme, analyze, analyze_pptx
 from admin.preview import SAMPLE_DECK, render_pptx_preview
 from admin.store import KIND_PPTX, TemplateStoreError, kind_meta, validate_asset_filename
 from config import Config
@@ -148,6 +149,31 @@ class TestAnalyzePptx:
         assert colors.get("dk1") == "#000000"
         assert colors.get("lt1") == "#FFFFFF"
 
+    def test_an_unconvertible_colour_node_is_logged_not_dropped_silently(self, caplog):
+        """OOXML permits scrgbClr/hslClr; Office writes neither, but say so.
+
+        Dropping an unreadable entry without a word is the failure this reader
+        was written to avoid — it just happens to be a narrower input space.
+        """
+        import logging
+
+        prs = PptxReader(str(TEMPLATE_16_9))
+        theme = prs.slide_masters[0].part.part_related_by(
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme")
+        root = etree.fromstring(theme.blob)
+        accent1 = root.find(".//" + pptx_qn("a:clrScheme") + "/" + pptx_qn("a:accent1"))
+        for child in list(accent1):
+            accent1.remove(child)
+        etree.SubElement(accent1, pptx_qn("a:scrgbClr"), r="50000", g="50000", b="50000")
+        theme._blob = etree.tostring(root)
+
+        with caplog.at_level(logging.INFO, logger="admin.analysis"):
+            fonts, colors = _read_theme(prs)
+
+        assert "accent1" not in colors
+        assert "accent2" in colors, "the other entries must still be read"
+        assert any("scrgbClr" in record.getMessage() for record in caplog.records)
+
     def test_unrecognised_layouts_are_reported_not_guessed(self, pptx_bytes):
         """Vertical-text and content-with-caption are deliberate refusals."""
         a = analyze_pptx(pptx_bytes)
@@ -220,6 +246,66 @@ class TestAnalyzePptx:
         assert analysis.role_map["section"] == claimants[0]
         assert analysis.role_map["section"] == layout.name
         assert warning is None
+
+
+# =============================================================================
+# strip_slides
+# =============================================================================
+
+def _template_carrying_its_own_slide(tmp_path) -> Path:
+    """A template file with a sample slide of its own, as a designer might leave."""
+    prs = PptxReader(str(TEMPLATE_16_9))
+    slide = prs.slides.add_slide(prs.slide_layouts[0])
+    slide.shapes.title.text = "SAMPLE COVER"
+    path = tmp_path / "with_sample.pptx"
+    prs.save(str(path))
+    return path
+
+
+def _build_on(path, strip_slides: bool):
+    from pptx_tools.slide_builder import PowerpointPresentation
+    from pptx_tools.templates import TemplateSpec, aspect_of, open_template
+
+    spec = TemplateSpec(name="sampled", path=Path(path), strip_slides=strip_slides,
+                        aspect=aspect_of(open_template(Path(path))))
+    pres = PowerpointPresentation(
+        [{"type": "content", "title": "Generated", "body": "- something"}],
+        "16:9", template_spec=spec,
+    )
+    doc = PptxReader(pres.save())
+    texts = [shape.text_frame.text for slide in doc.slides
+             for shape in slide.shapes if shape.has_text_frame]
+    return doc, texts
+
+
+class TestStripSlides:
+    """The admin checkbox has to change the deck, not just the YAML.
+
+    Found in review: `strip_slides` was parsed into the spec and offered in the
+    UI, but `_remove_template_slides` ran unconditionally and nothing ever read
+    the field. Unticking the box changed nothing and said nothing — the same
+    silent-failure class as the theme reader this phase already fixed. The
+    round-trip test alone could not see it, because it only checked the YAML.
+    """
+
+    def test_enabled_drops_the_templates_own_slides(self, tmp_path):
+        doc, texts = _build_on(_template_carrying_its_own_slide(tmp_path), True)
+        assert len(doc.slides) == 1
+        assert not any("SAMPLE COVER" in t for t in texts)
+
+    def test_disabled_keeps_them_ahead_of_the_generated_slides(self, tmp_path):
+        doc, texts = _build_on(_template_carrying_its_own_slide(tmp_path), False)
+        assert len(doc.slides) == 2
+        assert "SAMPLE COVER" in doc.slides[0].shapes.title.text
+        assert any("Generated" in t for t in texts)
+
+    def test_with_no_template_spec_the_previous_behaviour_is_unchanged(self):
+        """The built-in-theme path has no spec to consult and must still strip."""
+        from pptx_tools.slide_builder import PowerpointPresentation
+
+        pres = PowerpointPresentation(
+            [{"type": "content", "title": "Generated", "body": "- x"}], "16:9")
+        assert len(PptxReader(pres.save()).slides) == 1
 
 
 # =============================================================================

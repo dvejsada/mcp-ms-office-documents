@@ -213,7 +213,20 @@ class PowerpointPresentation(SlideHelpers):
         template carrying a sample slide shipped that slide's XML, text and
         images inside every generated file even though PowerPoint showed the
         right slide count. Dropping the relationship removes the part too.
+
+        A template can opt out with ``strip_slides: false`` when its own slides
+        are meant to survive — a fixed cover or back page the generated slides
+        should follow. Until this check existed the option was parsed, stored
+        and offered in the admin UI but never read, so unticking the box
+        changed nothing and said nothing.
         """
+        if self.spec is not None and not self.spec.strip_slides:
+            logger.debug(
+                "Template %r sets strip_slides: false; keeping its %d slide(s)",
+                self.spec.name, len(self.presentation.slides._sldIdLst),
+            )
+            return
+
         sldIdLst = self.presentation.slides._sldIdLst
         prs_part = self.presentation.part
 
