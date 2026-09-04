@@ -125,6 +125,29 @@ class PowerpointPresentation(SlideHelpers):
         self.warnings.append(entry)
         logger.warning("[pptx] %s", entry)
 
+    @staticmethod
+    def _setting(slide_data, field: str, defaults: dict, key: str, fallback):
+        """An option's effective value: the slide's, else the template's, else *fallback*.
+
+        The registry documents ``defaults`` as "applied when the tool call does
+        not set the same option", so precedence is the explicit slide value,
+        then the template default, then the built-in. "Set" is read from
+        ``model_fields_set`` rather than the value: ``zebra`` and
+        ``data_labels`` default to real booleans, so their value alone cannot
+        say whether the caller chose it. An explicit ``null`` counts as unset.
+
+        Until this existed the table and chart defaults were parsed into the
+        spec and stored on the builder but never consulted — four documented
+        options that changed nothing.
+        """
+        if field in slide_data.model_fields_set:
+            value = getattr(slide_data, field)
+            if value is not None:
+                return value
+        if key in defaults and defaults[key] is not None:
+            return defaults[key]
+        return fallback
+
     def _create_presentation(self, format: str, template: Optional[str] = None,
                              template_spec: Optional[TemplateSpec] = None) -> Presentation:
         """Create the presentation from the selected registered template."""
@@ -335,7 +358,23 @@ class PowerpointPresentation(SlideHelpers):
                 for a in slide_data.align
             ]
 
-        header_fill = resolve_fill(slide_data.header_color, TABLE_HEADER_FILL)
+        # Registry key is header_fill (a theme name or hex); the slide field is
+        # header_color. Accept either spelling from the template.
+        table_defaults = dict(self._table_defaults)
+        if "header_color" in table_defaults and "header_fill" not in table_defaults:
+            table_defaults["header_fill"] = table_defaults["header_color"]
+        header_fill = resolve_fill(
+            self._setting(slide_data, "header_color", table_defaults, "header_fill", None),
+            TABLE_HEADER_FILL,
+        )
+        zebra = bool(self._setting(slide_data, "zebra", table_defaults, "zebra", True))
+        font_size = self._setting(slide_data, "font_size", table_defaults, "font_size", None)
+        if font_size is not None:
+            try:
+                font_size = int(font_size)
+            except (TypeError, ValueError):
+                self._warn(index, f"template table font_size {font_size!r} is not a number; ignored.")
+                font_size = None
 
         _, points = self._create_styled_table(
             slide,
@@ -345,9 +384,9 @@ class PowerpointPresentation(SlideHelpers):
             width=width,
             height=height,
             header_color=header_fill,
-            alternate_rows=slide_data.zebra,
+            alternate_rows=zebra,
             column_alignments=col_alignments,
-            font_size=slide_data.font_size,
+            font_size=font_size,
         )
 
         if points and table_overflows(len(rows), height, points):
@@ -356,7 +395,7 @@ class PowerpointPresentation(SlideHelpers):
                 f"table of {len(rows)} rows will not fit the content area even at "
                 f"{points}pt; split it across slides.",
             )
-        elif slide_data.font_size is None and points and points < int(DEFAULT_BODY_FONT_SIZE.pt):
+        elif font_size is None and points and points < int(DEFAULT_BODY_FONT_SIZE.pt):
             self._warn(
                 index,
                 f"table font reduced to {points}pt to fit {len(rows)} rows.",
@@ -490,7 +529,10 @@ class PowerpointPresentation(SlideHelpers):
                 legend_position=slide_data.legend,
                 title=slide_data.chart_title,
             )
-            configure_data_labels(chart, slide_data.data_labels, slide_data.number_format)
+            data_labels = self._setting(
+                slide_data, "data_labels", self._chart_defaults, "data_labels", False
+            )
+            configure_data_labels(chart, bool(data_labels), slide_data.number_format)
             set_axis_titles(chart, slide_data.x_title, slide_data.y_title)
         except ChartDataError as e:
             logger.error(f"Chart error: {e}")
