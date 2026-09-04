@@ -299,15 +299,15 @@ async def create_powerpoint_presentation(
 - title: {slide_type: "title", slide_title: str, subtitle?: str}  (subtitle can contain author name, tagline, date, etc.)
 - section: {slide_type: "section", slide_title: str}
 - content: {slide_type: "content", slide_title: str, slide_text: [{text: str, indentation_level: int (1-3)}]}
-- table: {slide_type: "table", slide_title: str, table_data: [[str]] (first row = header; optional second row with :---|:---:|---: for left/center/right column alignment), header_color?: str (hex), alternate_rows?: bool}
+- table: {slide_type: "table", slide_title: str, table_data: [[str|number|null]] (first row = header; optional second row with :---|:---:|---: for left/center/right column alignment), header_color?: str (6-digit hex, with or without '#'), alternate_rows?: bool}
 - image: {slide_type: "image", slide_title?: str, image_url: str, image_caption?: str}
 - two_column: {slide_type: "two_column", slide_title: str, left_column: [{text: str, indentation_level: int}], right_column: [{text: str, indentation_level: int}], left_heading?: str, right_heading?: str}
-- chart: {slide_type: "chart", slide_title: str, chart_type: str (bar|bar_stacked|column|column_stacked|line|line_markers|pie|doughnut|area|area_stacked|scatter|radar), chart_data: {categories: [str], series: [{name: str, values: [number]}]}, has_legend?: bool, legend_position?: str}
+- chart: {slide_type: "chart", slide_title: str, chart_type: str (bar|bar_stacked|column|column_stacked|line|line_markers|pie|doughnut|area|area_stacked|radar), chart_data: {categories: [str], series: [{name: str, values: [number]}]}, has_legend?: bool, legend_position?: str}
 - quote: {slide_type: "quote", slide_title?: str, quote_text: str, quote_author?: str}
 
-All slides support optional 'speaker_notes': str field.
+All slides support optional 'speaker_notes': str field. An unrecognised slide_type is rejected with an error listing the valid types — it is never skipped silently.
 
-Inline markdown formatting is supported in text fields (slide_text, quote_text, left_column, right_column): **bold**, *italic*, ***bold italic***, ~~strikethrough~~, __underline__, `code`."""
+Inline markdown formatting is supported in text fields (slide_text, quote_text, left_column, right_column): **bold**, *italic*, ***bold italic***, ~~strikethrough~~, __underline__, `code`. A marker only formats when it hugs its text (**bold**, not ** bold **), so ordinary prose such as "5 * 3 * 2" is left alone. Escape a literal marker with a backslash (\\*), or wrap it in backticks to render it verbatim."""
     )],
     format: Annotated[Literal["4:3", "16:9"], Field(
         default="16:9",

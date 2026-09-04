@@ -21,12 +21,13 @@ from .constants import (
     TWO_COLUMN_LAYOUT, TWO_COLUMN_TEXT_LAYOUT,
     DEFAULT_SUBTITLE_FONT_SIZE, DEFAULT_CAPTION_FONT_SIZE, DEFAULT_QUOTE_FONT_SIZE,
     TABLE_HEADER_FILL,
+    DEFAULT_SLIDE_FORMAT, SLIDE_FORMAT_16_9, VALID_SLIDE_FORMATS,
 )
 from .helpers import (
     SlideHelpers,
     parse_table_data, parse_color,
 )
-from .inline_formatting import has_inline_formatting, apply_inline_formatting
+from .inline_formatting import needs_inline_processing, apply_inline_formatting
 from .chart_utils import add_chart_to_slide, ChartDataError
 
 logger = logging.getLogger(__name__)
@@ -76,7 +77,7 @@ class PowerpointPresentation(SlideHelpers):
         self.presentation = self._create_presentation(format)
         self._footer_text = footer_text
         self._show_slide_numbers = show_slide_numbers
-        self._remove_default_slide()
+        self._remove_template_slides()
         self._build_slides(slides)
         if footer_text or show_slide_numbers:
             self._apply_footer_and_slide_numbers()
@@ -92,8 +93,15 @@ class PowerpointPresentation(SlideHelpers):
         Returns:
             Presentation object.
         """
+        if format not in VALID_SLIDE_FORMATS:
+            logger.warning(
+                "Unknown presentation format %r; using %s. Valid formats: %s",
+                format, DEFAULT_SLIDE_FORMAT, ", ".join(VALID_SLIDE_FORMATS),
+            )
+            format = DEFAULT_SLIDE_FORMAT
+
         template_4_3, template_16_9 = _get_templates()
-        template = template_16_9 if format == "16:9" else template_4_3
+        template = template_16_9 if format == SLIDE_FORMAT_16_9 else template_4_3
 
         if template:
             try:
@@ -104,15 +112,31 @@ class PowerpointPresentation(SlideHelpers):
         logger.warning(f"Using default PowerPoint template for {format}")
         return Presentation()
 
-    def _remove_default_slide(self) -> None:
-        """Remove default slide if present."""
-        if len(self.presentation.slides) > 0:
+    def _remove_template_slides(self) -> None:
+        """Remove every slide the template ships with, parts included.
+
+        Dropping only the ``<p:sldId>`` entry (what this did previously) leaves
+        the slide's relationship in place, and python-pptx serialises parts by
+        walking relationships — so a template carrying a sample slide shipped
+        that slide's XML, text and images inside every generated file even
+        though PowerPoint showed the right slide count. Dropping the
+        relationship as well removes the part from the saved package.
+        """
+        sldIdLst = self.presentation.slides._sldIdLst
+        prs_part = self.presentation.part
+
+        removed = 0
+        for sldId in list(sldIdLst):
+            rId = sldId.rId
             try:
-                slide = self.presentation.slides[0]
-                self.presentation.slides.element.remove(slide.element)
-                logger.debug("Removed default slide")
+                sldIdLst.remove(sldId)
+                prs_part.drop_rel(rId)
+                removed += 1
             except Exception as e:
-                logger.debug(f"Could not remove default slide: {e}")
+                logger.warning("Could not fully remove template slide %s: %s", rId, e)
+
+        if removed:
+            logger.debug("Removed %d slide(s) carried by the template", removed)
 
     def _build_slides(self, slides: List[Dict[str, Any]]) -> None:
         """Build all slides from data.
@@ -134,18 +158,30 @@ class PowerpointPresentation(SlideHelpers):
         logger.info(f"Building {len(slides)} slides")
 
         for i, slide_data in enumerate(slides):
+            if not isinstance(slide_data, dict):
+                raise ValueError(
+                    f"Slide {i} must be an object with a 'slide_type' field, got {type(slide_data).__name__}"
+                )
+
             slide_type = slide_data.get("slide_type", "")
             builder = slide_builders.get(slide_type)
 
-            if builder:
-                try:
-                    logger.debug(f"Building slide {i}: type={slide_type}")
-                    builder(slide_data)
-                except Exception as e:
-                    logger.error(f"Failed to create slide {i}: {e}")
-                    raise ValueError(f"Error creating slide {i} ({slide_type}): {e}")
-            else:
-                logger.warning(f"Unknown slide type '{slide_type}' at index {i}")
+            if builder is None:
+                # Previously this only logged a warning: the slide was dropped and
+                # the caller still received a success response quoting the number
+                # of slides it had asked for. Fail loudly so the model can correct
+                # the type instead of shipping a deck with holes in it.
+                raise ValueError(
+                    f"Unknown slide_type {slide_type!r} at slide {i}. "
+                    f"Valid types: {', '.join(sorted(slide_builders))}"
+                )
+
+            try:
+                logger.debug(f"Building slide {i}: type={slide_type}")
+                builder(slide_data)
+            except Exception as e:
+                logger.error(f"Failed to create slide {i}: {e}")
+                raise ValueError(f"Error creating slide {i} ({slide_type}): {e}")
 
     # -------------------------------------------------------------------------
     # Slide Builders
@@ -369,7 +405,7 @@ class PowerpointPresentation(SlideHelpers):
         para = tf.paragraphs[0]
         para.alignment = PP_ALIGN.CENTER
         formatted_quote = f'"{quote_text}"'
-        if has_inline_formatting(formatted_quote):
+        if needs_inline_processing(formatted_quote):
             apply_inline_formatting(para, formatted_quote,
                                     font_size=DEFAULT_QUOTE_FONT_SIZE, italic=True)
         else:
@@ -405,12 +441,8 @@ class PowerpointPresentation(SlideHelpers):
             layout = slide.slide_layout
             spTree = slide.shapes._spTree
 
-            # Determine next available shape ID on this slide
-            existing_ids = {
-                int(sp.get('id', 0))
-                for sp in spTree.findall(qn('p:sp') + '//' + qn('p:cNvPr'))
-            }
-            # Simpler: collect all id attributes from direct children
+            # Determine next available shape ID on this slide by collecting the
+            # id attributes of the tree's direct children.
             existing_ids = set()
             for sp in spTree:
                 cNvPr = sp.find('.//' + qn('p:cNvPr'))

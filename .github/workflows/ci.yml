@@ -1,6 +1,9 @@
 name: Lint & Test
 
 on:
+  push:
+    branches: ["master"]
+  pull_request:
   workflow_dispatch:
 
 jobs:
@@ -17,12 +20,18 @@ jobs:
           python-version: "3.12"
           cache: "pip"
 
+      # requirements-dev.txt pulls in requirements.txt plus ruff and
+      # pytest-asyncio. Installing only requirements.txt left both the lint and
+      # the test step without their tool, which went unnoticed while this
+      # workflow ran on manual dispatch only.
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements-dev.txt
 
       - name: Run ruff linter
         run: ruff check .
 
+      # Tests marked `network` reach out to a public image host; they stay out
+      # of CI so a third-party outage can never fail an unrelated pull request.
       - name: Run tests
-        run: pytest --tb=short -q
+        run: pytest --tb=short -q -m "not network"
 

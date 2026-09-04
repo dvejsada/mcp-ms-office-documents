@@ -13,7 +13,14 @@ from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
 logger = logging.getLogger(__name__)
 
 
-# Mapping of chart type strings to python-pptx chart types
+# Mapping of chart type strings to python-pptx chart types.
+#
+# Every entry here is category-based and is built from CategoryChartData.
+# 'scatter' (XY_SCATTER) is deliberately absent: an XY chart needs XyChartData
+# and (x, y) point pairs, so building one from categories+series raised
+# "'CategoryWorkbookWriter' object has no attribute 'x_values_ref'" on every
+# call. It was advertised in the tool description but could never succeed.
+# A dedicated scatter slide type with its own data shape is tracked separately.
 CHART_TYPE_MAP = {
     'bar': XL_CHART_TYPE.BAR_CLUSTERED,
     'bar_stacked': XL_CHART_TYPE.BAR_STACKED,
@@ -25,8 +32,17 @@ CHART_TYPE_MAP = {
     'doughnut': XL_CHART_TYPE.DOUGHNUT,
     'area': XL_CHART_TYPE.AREA,
     'area_stacked': XL_CHART_TYPE.AREA_STACKED,
-    'scatter': XL_CHART_TYPE.XY_SCATTER,
     'radar': XL_CHART_TYPE.RADAR,
+}
+
+# Chart types that are recognised but not supported, mapped to the advice shown
+# to the caller. Without this, 'scatter' would report only "Unknown chart type".
+UNSUPPORTED_CHART_TYPES = {
+    'scatter': (
+        "Scatter (XY) charts are not supported yet because they need (x, y) point "
+        "pairs rather than categories and series. Use 'line_markers' for a trend "
+        "over ordered categories."
+    ),
 }
 
 
@@ -48,15 +64,18 @@ def validate_chart_data(chart_data: Dict[str, Any], chart_type: str) -> None:
     if not chart_data:
         raise ChartDataError("Chart data is required")
 
+    if chart_type in UNSUPPORTED_CHART_TYPES:
+        raise ChartDataError(
+            f"{UNSUPPORTED_CHART_TYPES[chart_type]} Available: {', '.join(CHART_TYPE_MAP)}"
+        )
+
     if chart_type not in CHART_TYPE_MAP:
         raise ChartDataError(f"Unknown chart type: {chart_type}. Available: {', '.join(CHART_TYPE_MAP.keys())}")
 
-    # Scatter charts don't use categories
-    if chart_type != 'scatter':
-        if 'categories' not in chart_data:
-            raise ChartDataError("Chart data must include 'categories'")
-        if not chart_data['categories']:
-            raise ChartDataError("Categories list cannot be empty")
+    if 'categories' not in chart_data:
+        raise ChartDataError("Chart data must include 'categories'")
+    if not chart_data['categories']:
+        raise ChartDataError("Categories list cannot be empty")
 
     if 'series' not in chart_data:
         raise ChartDataError("Chart data must include 'series'")

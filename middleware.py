@@ -48,7 +48,13 @@ class ApiKeyAuthMiddleware(Middleware):
             raise ValueError("ApiKeyAuthMiddleware requires a non-empty expected_key")
         self.expected_key = expected_key
         self._failed_attempts: int = 0
-        self._last_warn_time: float = 0.0
+        # None means "no warning emitted yet". Do NOT use 0.0 as that sentinel:
+        # it is compared against time.monotonic(), whose epoch is the host boot
+        # on Linux, so on a freshly started pod "now - 0.0" is under the throttle
+        # interval and the very first auth failure would be silenced for up to
+        # _WARN_INTERVAL_SECONDS after boot — exactly when a misconfigured client
+        # is most likely to be hammering a new deployment.
+        self._last_warn_time: Optional[float] = None
 
     # ------------------------------------------------------------------
     # Key extraction
@@ -96,8 +102,10 @@ class ApiKeyAuthMiddleware(Middleware):
             # Always log at DEBUG (cheap, only visible when debug is on)
             logger.debug("Auth failure on %s (attempt #%d)", context.method, self._failed_attempts)
 
-            # Throttled WARNING: emit at most once per interval
-            if now - self._last_warn_time >= self._WARN_INTERVAL_SECONDS:
+            # Throttled WARNING: emit at most once per interval, and always on
+            # the first failure regardless of how long the process has been up.
+            if (self._last_warn_time is None
+                    or now - self._last_warn_time >= self._WARN_INTERVAL_SECONDS):
                 logger.warning(
                     "Rejected %d auth attempt(s) in the last %.0fs",
                     self._failed_attempts,

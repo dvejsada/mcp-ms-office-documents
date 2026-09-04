@@ -17,15 +17,41 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Inline formatting regex (subset of docx_tools/patterns.py)
 # Covers the formats that render well in PowerPoint.
+#
+# Every marker is "flanked": the opening marker must be followed by a character
+# that is neither whitespace nor another marker character, and the closing
+# marker must be preceded by one. This mirrors CommonMark's left/right-flanking
+# delimiter rules and is what keeps prose such as "5 * 3 * 2 = 30" or
+# "10 ~ 20 ~ 30" from being read as emphasis. Without it, the italic branch
+# matched "* 3 *" and italicised the 3.
+#
+# Note on dunders: "__init__" is emphasis under standard markdown too (the
+# opening and closing markers are both flanked), so it is matched here as well.
+# Write it inside backticks — `__init__` — to render it verbatim; the code
+# branch consumes the span before any emphasis branch sees it.
 # ---------------------------------------------------------------------------
 
 _INLINE_FORMAT_RE = re.compile(
-    r'(\*{3}(?:[^*]|\*(?!\*{2}))+\*{3}'  # ***bold italic***
-    r'|\*\*(?:[^*]|\*(?!\*))+\*\*'       # **bold**
-    r'|~~.+?~~'                           # ~~strikethrough~~
-    r'|__(?!_).+?__'                      # __underline__
-    r'|\*(?:[^*]|\*\*[^*]+\*\*)+\*'       # *italic* (allows nested **bold**)
-    r'|`[^`]+`)'                          # `code`
+    # ***bold italic***
+    r'(\*{3}(?=[^\s*])(?:[^*]|\*(?!\*{2}))+?(?<=[^\s*])\*{3}'
+    # **bold**
+    r'|\*\*(?=[^\s*])(?:[^*]|\*(?!\*))+?(?<=[^\s*])\*\*'
+    # ~~strikethrough~~
+    r'|~~(?=[^\s~]).+?(?<=[^\s~])~~'
+    # __underline__
+    r'|__(?=[^\s_]).+?(?<=[^\s_])__'
+    # *italic* (allows nested **bold**)
+    #
+    # The other branches close on a lookbehind, but this one cannot: a nested
+    # **bold** unit ends in '*', so a lookbehind would reject an italic span
+    # whose last element is bold with nothing between the two closers
+    # ("*always **backup your data***") and the outer italic would be dropped,
+    # leaving stray asterisks on the slide. Instead the right flank is stated
+    # structurally: whatever is consumed last must itself be a valid flank —
+    # a non-space non-star character, or a complete nested bold unit.
+    r'|\*(?=[^\s*])(?:[^*]|\*\*[^*]+\*\*)*?(?:[^\s*]|\*\*[^*]+\*\*)\*'
+    # `code`
+    r'|`[^`]+`)'
 )
 
 _ESCAPE_RE = re.compile(r'\\(.)')  # backslash-escaped character
@@ -38,6 +64,22 @@ _ESCAPE_RE = re.compile(r'\\(.)')  # backslash-escaped character
 def has_inline_formatting(text: str) -> bool:
     """Quick check whether text contains any inline markdown markers."""
     return bool(_INLINE_FORMAT_RE.search(text))
+
+
+def has_escapes(text: str) -> bool:
+    """Quick check whether text contains a backslash escape."""
+    return bool(_ESCAPE_RE.search(text))
+
+
+def needs_inline_processing(text: str) -> bool:
+    """True when *text* must go through :func:`apply_inline_formatting`.
+
+    Callers used to test :func:`has_inline_formatting` alone and assign
+    ``paragraph.text`` directly otherwise. That skipped the escape pass, so
+    text carrying only an escape and no live marker (``price \\* qty``) kept its
+    backslash. Escapes are now honoured whether or not the text also formats.
+    """
+    return has_inline_formatting(text) or has_escapes(text)
 
 
 def apply_inline_formatting(
