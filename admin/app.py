@@ -1,14 +1,24 @@
-"""FastHTML admin UI for managing dynamic docx/email templates.
+"""FastHTML admin UI for managing dynamic docx / email / pptx templates.
 
 Mounted in the same ASGI process as the FastMCP server (see
-:func:`build_combined_app`) so that saving a template registers/updates its MCP
-tool immediately — no restart. The UI is gated by a single shared password
-(:mod:`admin.auth`) and persists templates through :class:`admin.store.TemplateStore`.
+:func:`build_combined_app`) so that saving a template takes effect immediately —
+no restart. The UI is gated by a single shared password (:mod:`admin.auth`) and
+persists templates through :class:`admin.store.TemplateStore`.
 
 Authoring model (chosen with the maintainer): the user uploads a real ``.docx``
 (or email ``.html``); the UI auto-detects placeholders/conditionals
 (:mod:`admin.analysis`), pre-builds the argument form, and previews
 (:mod:`admin.preview`) without ever hitting the upload backend.
+
+PowerPoint is the odd one out and the views branch on it in a few places. A
+docx or email template is a parameterised document that becomes an MCP tool of
+its own, so it has arguments to declare and "live" means the tool is
+registered. A pptx template is a *design* — layouts, theme, aspect — with no
+arguments at all; it becomes one more value for the ``template`` argument of
+the single ``create_powerpoint_presentation`` tool, and "live" means the
+template registry has re-read it. Its form offers layout roles and deck
+defaults where the others offer arguments, and its preview builds a fixed
+sample deck instead of substituting values.
 """
 from __future__ import annotations
 
@@ -16,6 +26,7 @@ import hashlib
 import json
 import logging
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import metrics
@@ -30,16 +41,21 @@ from starlette.routing import Mount
 
 from config import Config
 from admin import auth
-from admin.analysis import analyze, reconcile, Analysis
-from admin.preview import sample_values, render_docx_preview, render_email_preview
-from admin.store import FileTemplateStore, KIND_DOCX, KIND_EMAIL, TemplateStoreError, validate_name
+from admin.analysis import analyze, reconcile, Analysis, PptxAnalysis
+from admin.preview import (
+    sample_values, render_docx_preview, render_email_preview, render_pptx_preview,
+)
+from admin.store import (
+    FileTemplateStore, KIND_DOCX, KIND_EMAIL, KIND_PPTX,
+    TemplateStoreError, kind_meta, validate_name,
+)
 from template_registry import gather_specs
 
 logger = logging.getLogger(__name__)
 
-KINDS = (KIND_DOCX, KIND_EMAIL)
-_KIND_LABEL = {KIND_DOCX: "Word", KIND_EMAIL: "Email"}
-_KIND_ICON = {KIND_DOCX: "📝", KIND_EMAIL: "✉️"}
+KINDS = (KIND_DOCX, KIND_EMAIL, KIND_PPTX)
+_KIND_LABEL = {KIND_DOCX: "Word", KIND_EMAIL: "Email", KIND_PPTX: "PowerPoint"}
+_KIND_ICON = {KIND_DOCX: "📝", KIND_EMAIL: "✉️", KIND_PPTX: "📊"}
 _ARG_TYPES = ["string", "int", "float", "bool", "list"]
 # Style-mapping keys surfaced in the UI (subset of the full recognised set).
 _STYLE_KEYS = ["heading_1", "list_number", "list_bullet", "quote", "table"]
@@ -123,6 +139,14 @@ th{font-size:.78rem;text-transform:uppercase;letter-spacing:.03em;color:var(--mu
 .flash-warn{background:var(--warn-bg);border-color:#fde68a;color:#854d0e}
 .flash-err{background:var(--err-bg);border-color:#fecaca;color:#991b1b}
 .empty{text-align:center;padding:2rem 1rem;color:var(--muted)}
+/* PowerPoint template views */
+.role-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:0 1rem}
+.facts .field{margin-bottom:.6rem}
+.warn-text{color:var(--warn)}
+.swatch-wrap{display:inline-flex;align-items:center;gap:.35rem;margin:.15rem .6rem .15rem 0}
+.swatch{display:inline-block;width:14px;height:14px;border-radius:3px;border:1px solid var(--line)}
+.swatch-label{font-size:.78rem;color:var(--muted);font-family:ui-monospace,Menlo,monospace}
+.field label input[type=checkbox]{width:auto;margin-right:.4rem;vertical-align:-2px}
 details{margin:1rem 0;border:1px solid var(--line);border-radius:8px;padding:.5rem .85rem}
 summary{cursor:pointer;font-weight:600}
 .login-wrap{max-width:380px;margin:8vh auto}
@@ -184,7 +208,18 @@ class AdminContext:
 
     # -- live MCP tool registration ----------------------------------------
 
+    # A docx or email template *is* an MCP tool, so saving one registers a tool.
+    # A PowerPoint template is not: there is a single
+    # ``create_powerpoint_presentation`` tool and a template is one more value
+    # for its ``template`` argument. "Going live" therefore means the registry
+    # re-reads the spec directory, which is what clear_cache forces. The
+    # registry already notices the change on its own via a directory
+    # fingerprint; dropping the cache here just makes it immediate rather than
+    # on the next call that happens to look.
+
     def register(self, kind: str, spec: Dict[str, Any]) -> bool:
+        if kind == KIND_PPTX:
+            return self._refresh_pptx_registry(spec.get("name"))
         if kind == KIND_DOCX:
             from docx_tools.dynamic_docx_tools import register_docx_template
             return register_docx_template(self.mcp, spec, self.global_style_mapping)
@@ -192,6 +227,10 @@ class AdminContext:
         return register_email_template(self.mcp, spec)
 
     def unregister(self, kind: str, name: str) -> bool:
+        if kind == KIND_PPTX:
+            from pptx_tools.templates import clear_cache
+            clear_cache()
+            return True
         if kind == KIND_DOCX:
             from docx_tools.dynamic_docx_tools import unregister_docx_template
             return unregister_docx_template(self.mcp, name)
@@ -199,11 +238,35 @@ class AdminContext:
         return unregister_email_template(self.mcp, name)
 
     def live_names(self, kind: str) -> List[str]:
+        if kind == KIND_PPTX:
+            from pptx_tools.templates import template_names
+            try:
+                return template_names()
+            except Exception:
+                logger.exception("[admin] Could not read the pptx template registry")
+                return []
         if kind == KIND_DOCX:
             from docx_tools.dynamic_docx_tools import registered_docx_template_names
             return registered_docx_template_names()
         from email_tools.dynamic_email_tools import registered_email_template_names
         return registered_email_template_names()
+
+    @staticmethod
+    def _refresh_pptx_registry(name: Optional[str]) -> bool:
+        """Reload the pptx registry and report whether *name* is now in it.
+
+        Returning False here means the saved spec did not come back out of the
+        registry — almost always because its file is missing from the template
+        directories — and the admin is told so rather than being shown a
+        success message for a template the tool cannot use.
+        """
+        from pptx_tools.templates import clear_cache, template_names
+        clear_cache()
+        try:
+            return name in template_names()
+        except Exception:
+            logger.exception("[admin] Could not reload the pptx template registry")
+            return False
 
 
 # ---------------------------------------------------------------------------
@@ -262,8 +325,63 @@ def _parse_style_mapping(form) -> Dict[str, str]:
     return mapping
 
 
+def _checked(form, field: str) -> bool:
+    """True when a checkbox was submitted ticked.
+
+    An unticked HTML checkbox sends nothing at all, so absence has to mean
+    False rather than "unset".
+    """
+    return (form.get(field) or "").lower() in ("1", "true", "yes", "on")
+
+
+def _build_pptx_spec(form) -> Dict[str, Any]:
+    """Assemble a PowerPoint template spec from the submitted edit form.
+
+    Nothing like the docx/email spec: no ``args``, because a presentation
+    template takes no arguments. What it carries instead is how the deck should
+    be laid out — which layout plays each role, and the deck-wide defaults.
+    """
+    from pptx_tools.layouts import ROLES
+
+    name = validate_name((form.get("name") or "").strip())
+    spec: Dict[str, Any] = {
+        "name": name,
+        "description": (form.get("description") or "").strip(),
+        "pptx_path": (form.get("asset_filename") or "").strip(),
+    }
+    if _checked(form, "is_default"):
+        spec["default"] = True
+    # Only write strip_slides when it departs from the default, so a spec file
+    # stays as small as what the admin actually chose.
+    if not _checked(form, "strip_slides"):
+        spec["strip_slides"] = False
+
+    layouts = {
+        role: (form.get(f"layout_{role}") or "").strip()
+        for role in ROLES
+        if (form.get(f"layout_{role}") or "").strip()
+    }
+    if layouts:
+        spec["layouts"] = layouts
+
+    defaults: Dict[str, Any] = {}
+    footer = (form.get("default_footer_text") or "").strip()
+    if footer:
+        defaults["footer_text"] = footer
+    language = (form.get("default_language") or "").strip()
+    if language:
+        defaults["language"] = language
+    if _checked(form, "default_slide_numbers"):
+        defaults["show_slide_numbers"] = True
+    if defaults:
+        spec["defaults"] = defaults
+    return spec
+
+
 def _build_spec(kind: str, form) -> Dict[str, Any]:
     """Assemble a template spec dict from the submitted edit form."""
+    if kind == KIND_PPTX:
+        return _build_pptx_spec(form)
     name = validate_name((form.get("name") or "").strip())
     asset_filename = (form.get("asset_filename") or "").strip()
     description = (form.get("description") or "").strip()
@@ -282,11 +400,17 @@ def _build_spec(kind: str, form) -> Dict[str, Any]:
 
 
 def _path_key(kind: str) -> str:
-    return "docx_path" if kind == KIND_DOCX else "html_path"
+    return kind_meta(kind)["path_key"]
 
 
 def _asset_ext(kind: str) -> str:
-    return ".docx" if kind == KIND_DOCX else ".html"
+    """The canonical extension, used when deriving a filename from the name."""
+    return kind_meta(kind)["asset_ext"]
+
+
+def _accept_exts(kind: str) -> str:
+    """Every extension the upload field accepts, as an HTML accept list."""
+    return ",".join(kind_meta(kind)["asset_exts"])
 
 
 # ---------------------------------------------------------------------------
@@ -329,13 +453,20 @@ def _template_table(ctx: AdminContext, kind: str, csrf: str = ""):
     managed_names = {s.get("name") for s in managed}
     live = set(ctx.live_names(kind))
 
+    # "Args" is meaningless for a presentation template, which declares none;
+    # what distinguishes one there is whether it is the default.
+    detail_header = "Default" if kind == KIND_PPTX else "Args"
+
     rows = []
     for spec in managed:
         name = spec.get("name")
-        nargs = len(spec.get("args") or [])
+        if kind == KIND_PPTX:
+            detail = "★ default" if spec.get("default") else "—"
+        else:
+            detail = str(len(spec.get("args") or []))
         rows.append(Tr(
             Td(A(name, href=ctx.u(f"/{kind}/{name}/edit"))),
-            Td(str(nargs)),
+            Td(detail),
             Td(_status_badge(name in live)),
             Td(Div(
                 A("Edit", href=ctx.u(f"/{kind}/{name}/edit"), cls="btn btn-secondary btn-sm"),
@@ -363,7 +494,7 @@ def _template_table(ctx: AdminContext, kind: str, csrf: str = ""):
             cls="empty",
         )
     return Table(
-        Thead(Tr(Th("Name"), Th("Args"), Th("Status"), Th("Actions"))),
+        Thead(Tr(Th("Name"), Th(detail_header), Th("Status"), Th("Actions"))),
         Tbody(*rows),
         cls="tpl-table",
     )
@@ -423,7 +554,9 @@ def _style_mapping_block(analysis: Optional[Analysis], spec: Dict[str, Any]):
     )
 
 
-def _analysis_report(analysis: Analysis, spec: Dict[str, Any]):
+def _analysis_report(analysis, spec: Dict[str, Any]):
+    if isinstance(analysis, PptxAnalysis):
+        return _pptx_analysis_report(analysis)
     rec = reconcile(analysis, spec.get("args") or [])
     cond_set = set(analysis.conditionals)
     items = [
@@ -449,8 +582,177 @@ def _analysis_report(analysis: Analysis, spec: Dict[str, Any]):
                *[i for i in items if i is not None], cls="card")
 
 
+def _swatch(name: str, value: str):
+    """One theme colour, shown rather than described."""
+    return Span(
+        Span(cls="swatch", style=f"background:{value}"),
+        Span(f"{name} {value}", cls="swatch-label"),
+        cls="swatch-wrap", title=f"{name}: {value}",
+    )
+
+
+def _pptx_analysis_report(analysis: PptxAnalysis):
+    """What we found in a PowerPoint template: size, layouts, roles, theme."""
+    rows = []
+    for layout in analysis.layouts:
+        rows.append(Tr(
+            Td(layout.name),
+            Td(Span(layout.role, cls="chip") if layout.role
+               else Span("name it explicitly", cls="muted")),
+            Td(_chips(layout.placeholders)),
+            Td("—" if layout.has_footer else Span("no footer", cls="muted")),
+        ))
+
+    facts = Div(
+        Div(Label("Slide size"),
+            Span(f"{analysis.slide_size} ({analysis.aspect})" if analysis.slide_size
+                 else "unknown"), cls="field"),
+        Div(Label("Theme fonts"),
+            Span(", ".join(f"{k}: {v}" for k, v in analysis.theme_fonts.items())
+                 or "not declared", cls="muted" if not analysis.theme_fonts else ""),
+            cls="field"),
+        Div(Label("Theme colours"),
+            Span(*[_swatch(k, v) for k, v in analysis.theme_colors.items()])
+            if analysis.theme_colors else Span("not declared", cls="muted"),
+            cls="field"),
+        cls="facts",
+    )
+
+    items = [H3("What we found in the template"), facts]
+    for w in analysis.warnings:
+        items.append(_flash("⚠ " + w, "warn"))
+    if rows:
+        items.append(Table(
+            Thead(Tr(Th("Layout"), Th("Detected role"), Th("Placeholders"), Th("Footer"))),
+            Tbody(*rows), cls="tpl-table",
+        ))
+    return Div(*items, cls="card")
+
+
+def _pptx_edit_form(ctx: AdminContext, spec: Dict[str, Any],
+                    analysis: Optional[PptxAnalysis], is_new: bool, csrf: str = ""):
+    """The PowerPoint template form.
+
+    Deliberately not the argument editor. A presentation template declares no
+    arguments; what an admin needs to control is which layout plays each slide
+    role, and the deck-wide defaults.
+    """
+    from pptx_tools.layouts import ROLES
+
+    kind = KIND_PPTX
+    asset_filename = spec.get("pptx_path", "")
+    configured = spec.get("layouts") or {}
+    defaults = spec.get("defaults") or {}
+    detected = analysis.role_map if analysis else {}
+    layout_names = analysis.layout_names if analysis else []
+
+    name_field = (
+        Div(Label("Template name"),
+            Input(name="name", value=spec.get("name", ""), required=True,
+                  placeholder="e.g. corporate_16_9"),
+            P("Letters, digits and underscores. This is the value passed as "
+              "the 'template' argument when generating a deck.", cls="muted"),
+            cls="field")
+        if is_new else
+        Div(Label("Template name"), Input(value=spec.get("name", ""), disabled=True), cls="field")
+    )
+
+    details_card = Div(
+        H3("Template details"),
+        name_field,
+        Div(Label("Description"),
+            Textarea(spec.get("description", ""), name="description", rows="3",
+                     placeholder="When should the AI reach for this deck? "
+                                 "e.g. 'Brand deck, widescreen. Use for client-facing work.'"),
+            P("This is what the AI sees when choosing between templates.", cls="muted"),
+            cls="field"),
+        Div(Label(Input(name="is_default", type="checkbox", value="1",
+                        checked=bool(spec.get("default"))),
+                  " Use this template when none is named"), cls="field"),
+        Div(Label(Input(name="strip_slides", type="checkbox", value="1",
+                        checked=bool(spec.get("strip_slides", True))),
+                  " Drop any slides the template file itself contains"),
+            P("Sample slides a designer left in the file never belong in generated "
+              "output. Leave this on unless you know otherwise.", cls="muted"),
+            cls="field"),
+        cls="card",
+    )
+
+    # One dropdown per role, populated from the template's real layout names.
+    role_fields = []
+    for role in ROLES:
+        current = configured.get(role, "")
+        auto = detected.get(role)
+        auto_label = f"auto-detected: {auto}" if auto else "not detected"
+        opts = [Option(f"({auto_label})", value="", selected=not current)]
+        opts += [Option(n, value=n, selected=(n == current)) for n in layout_names]
+        role_fields.append(Div(
+            Label(role),
+            Select(*opts, name=f"layout_{role}"),
+            None if auto else P("No layout matches this role — slides needing it fall "
+                                "back by position unless you pick one.",
+                                cls="muted warn-text"),
+            cls="field",
+        ))
+
+    layouts_card = Div(
+        H3("Layout for each slide role"),
+        P("Layouts are matched automatically by their placeholders, so most templates "
+          "need nothing here. Override a role only when the automatic choice is wrong, "
+          "or when it says 'not detected'.", cls="muted"),
+        Div(*role_fields, cls="role-grid"),
+        cls="card",
+    )
+
+    defaults_card = Div(
+        H3("Deck defaults"),
+        P("Applied when the tool call does not set the same option.", cls="muted"),
+        Div(Label("Footer text"),
+            Input(name="default_footer_text", value=defaults.get("footer_text", "") or "",
+                  placeholder="e.g. ACME s.r.o. · Confidential"),
+            cls="field"),
+        Div(Label("Language"),
+            Input(name="default_language", value=defaults.get("language", "") or "",
+                  placeholder="e.g. cs-CZ"),
+            P("BCP-47 tag stamped on every text run, so the deck is proof-read in "
+              "the right language.", cls="muted"),
+            cls="field"),
+        Div(Label(Input(name="default_slide_numbers", type="checkbox", value="1",
+                        checked=bool(defaults.get("show_slide_numbers"))),
+                  " Show slide numbers"), cls="field"),
+        cls="card",
+    )
+
+    return Form(
+        _csrf_input(csrf),
+        Hidden(name="kind", value=kind),
+        Hidden(name="asset_filename", value=asset_filename),
+        Hidden(name="name", value=spec.get("name", "")) if not is_new else None,
+        details_card,
+        layouts_card,
+        defaults_card,
+        Div(
+            Div(
+                Button("Save & make live", type="submit", cls="btn btn-primary"),
+                Button("Preview sample deck", type="submit",
+                       formaction=ctx.u(f"/{kind}/preview"),
+                       formtarget="_blank", cls="btn btn-secondary"),
+                A("Cancel", href=ctx.u("/"), cls="btn"),
+                cls="actions",
+            ),
+            P("Preview builds a six-slide sample deck on this template, using the "
+              "layout choices above — including ones you have not saved yet.",
+              cls="muted"),
+            cls="card",
+        ),
+        action=ctx.u(f"/{kind}/save"), method="post",
+    )
+
+
 def _edit_form(ctx: AdminContext, kind: str, spec: Dict[str, Any],
                analysis: Optional[Analysis], is_new: bool, csrf: str = ""):
+    if kind == KIND_PPTX:
+        return _pptx_edit_form(ctx, spec, analysis, is_new, csrf)
     asset_filename = spec.get(_path_key(kind), "")
     annotations = spec.get("annotations") or {}
     cond_set = set(analysis.conditionals) if analysis else set()
@@ -651,19 +953,24 @@ def _new_page(ctx: AdminContext, kind: str, csrf: str = "", error: str = None):
         Div(
             Form(
                 _csrf_input(csrf),
-                Div(Label("Tool name"),
-                    Input(name="name", required=True, placeholder="e.g. formal_letter"),
-                    P("Letters, digits and underscores — this is what the AI calls.", cls="muted"),
+                Div(Label("Template name" if kind == KIND_PPTX else "Tool name"),
+                    Input(name="name", required=True,
+                          placeholder="e.g. corporate_16_9" if kind == KIND_PPTX
+                          else "e.g. formal_letter"),
+                    P("Letters, digits and underscores — this is the value passed as the "
+                      "'template' argument when generating a deck." if kind == KIND_PPTX
+                      else "Letters, digits and underscores — this is what the AI calls.",
+                      cls="muted"),
                     cls="field"),
-                Div(Label(f"{_KIND_LABEL[kind]} file ({_asset_ext(kind)})"),
-                    Input(name="file", type="file", accept=_asset_ext(kind), required=True),
+                Div(Label(f"{_KIND_LABEL[kind]} file ({_accept_exts(kind)})"),
+                    Input(name="file", type="file", accept=_accept_exts(kind), required=True),
                     cls="field"),
                 Button("Upload & analyze", type="submit", cls="btn btn-primary"),
                 action=ctx.u(f"/{kind}/draft"), method="post", enctype="multipart/form-data",
             ),
             cls="card",
         ),
-        Details(
+        _pptx_help() if kind == KIND_PPTX else Details(
             Summary("How does this work?"),
             P("Author your document in ",
               "Word" if kind == KIND_DOCX else "any HTML editor",
@@ -675,6 +982,26 @@ def _new_page(ctx: AdminContext, kind: str, csrf: str = "", error: str = None):
             P("When you upload, we scan the file, list every placeholder, and pre-build the "
               "argument form for you. Nothing goes live until you press Save.", cls="muted"),
         ),
+    )
+
+
+def _pptx_help():
+    """How a presentation template differs from the other two kinds."""
+    return Details(
+        Summary("How does this work?"),
+        P("A PowerPoint template is a ", Span("design", cls="chip"),
+          ", not a fill-in-the-blanks document. It has no placeholders and takes no "
+          "arguments: what it contributes is the slide master, the layouts, the theme "
+          "fonts and the colour palette."),
+        P("So this does not become a tool of its own, the way a Word template does. It "
+          "becomes one more choice for the ", Span("template", cls="chip"),
+          " argument of the presentation tool, alongside any others you register."),
+        P("Design your deck in PowerPoint and save it as .pptx or .potx. Every layout you "
+          "want used should carry the placeholders it needs — a title, a content box, a "
+          "picture frame — and we work out which slide role each layout plays from those. "
+          "Sample slides left in the file are dropped from generated decks.", cls="muted"),
+        P("When you upload, we report the slide size, every layout with the role we detected "
+          "for it, and the theme. Nothing goes live until you press Save.", cls="muted"),
     )
 
 
@@ -785,12 +1112,17 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
         return _page(
             ctx, "Templates",
             H1("Templates"),
-            P("Create reusable Word and email templates. Each one becomes a tool the AI can call.",
+            P("Create reusable Word and email templates — each becomes a tool the AI can "
+              "call — and register PowerPoint templates for it to build decks on.",
               cls="muted"),
             Div(H2(f"{_KIND_ICON[KIND_DOCX]} Word templates"),
                 _template_table(ctx, KIND_DOCX, csrf), cls="card"),
             Div(H2(f"{_KIND_ICON[KIND_EMAIL]} Email templates"),
                 _template_table(ctx, KIND_EMAIL, csrf), cls="card"),
+            Div(H2(f"{_KIND_ICON[KIND_PPTX]} PowerPoint templates"),
+                P("Designs the presentation tool can build on. These are not tools of "
+                  "their own — they are choices for its 'template' argument.", cls="muted"),
+                _template_table(ctx, KIND_PPTX, csrf), cls="card"),
         )
 
     @rt("/status")
@@ -828,13 +1160,29 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
         if any("Could not open" in w for w in analysis.warnings):
             return _new_page(ctx, kind, csrf=csrf, error=analysis.warnings[0])
 
-        filename = f"{name}{_asset_ext(kind)}"
-        ctx.store.write_asset(kind, filename, data)
-        spec = {"name": name, "description": "", _path_key(kind): filename, "args": []}
+        # Keep the uploaded extension (a .potx stays a .potx) rather than
+        # forcing the canonical one onto a file that is not in that format.
+        suffix = Path(getattr(upload, "filename", "") or "").suffix.lower()
+        if suffix not in kind_meta(kind)["asset_exts"]:
+            suffix = _asset_ext(kind)
+        filename = f"{name}{suffix}"
+        try:
+            ctx.store.write_asset(kind, filename, data)
+        except TemplateStoreError as e:
+            return _new_page(ctx, kind, csrf=csrf, error=str(e))
+        spec: Dict[str, Any] = {"name": name, "description": "", _path_key(kind): filename}
+        if kind == KIND_PPTX:
+            spec["strip_slides"] = True
+        else:
+            spec["args"] = []
         return _page(
             ctx, f"Configure {name}",
             H1(f"Configure {name}"),
-            _flash(f"Analyzed {filename} — review the arguments below, preview, then save.", "ok"),
+            _flash(
+                f"Analyzed {filename} — check the layouts below, preview a sample deck, "
+                "then save." if kind == KIND_PPTX else
+                f"Analyzed {filename} — review the arguments below, preview, then save.",
+                "ok"),
             _analysis_report(analysis, spec),
             _edit_form(ctx, kind, spec, analysis, is_new=False, csrf=csrf),
         )
@@ -920,8 +1268,21 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
             return _page(ctx, "Save failed", H1("Save failed"), _flash(str(e), "err"),
                          A("← Back to all templates", href=ctx.u("/")))
         ok = ctx.register(kind, spec)
-        msg = (f"Saved — the tool '{spec['name']}' is now live and ready for the AI to use."
-               if ok else f"Saved, but the tool '{spec['name']}' could not be registered (check the logs).")
+        if kind == KIND_PPTX:
+            # No tool is created for a presentation template, so saying one is
+            # "live" would be a lie; what changed is the set of templates the
+            # presentation tool can build on.
+            msg = (
+                f"Saved — '{spec['name']}' is now one of the templates the presentation "
+                "tool can build on."
+                if ok else
+                f"Saved, but '{spec['name']}' did not come back out of the template "
+                "registry — check that its file is in custom_templates/ and see the logs."
+            )
+        else:
+            msg = (f"Saved — the tool '{spec['name']}' is now live and ready for the AI to use."
+                   if ok else
+                   f"Saved, but the tool '{spec['name']}' could not be registered (check the logs).")
         return _page(
             ctx, "Saved",
             H1("✓ Saved" if ok else "Saved with a warning"),
@@ -944,6 +1305,29 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
         if not asset or not ctx.store.asset_exists(kind, asset):
             return HTMLResponse("<p>Nothing to preview yet — save the template first.</p>",
                                 status_code=400)
+        if kind == KIND_PPTX:
+            # Rendered from the file on disk, not from bytes: open_template needs
+            # a path to fall back to its .potx rewrite.
+            try:
+                out, warnings = render_pptx_preview(ctx.store.asset_path(kind, asset), spec)
+            except Exception as e:
+                logger.exception("[admin] pptx preview failed")
+                return HTMLResponse(f"<p>Could not build a preview: {e}</p>", status_code=400)
+            headers = {
+                "Content-Disposition": f'attachment; filename="{spec["name"]}_preview.pptx"',
+            }
+            if warnings:
+                # Surfaced in a header because the response body is the deck
+                # itself; the same warnings reach the model on a real call.
+                headers["X-Preview-Warnings"] = " | ".join(warnings)[:900]
+            return Response(
+                content=out,
+                media_type=(
+                    "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                ),
+                headers=headers,
+            )
+
         data = ctx.store.read_asset(kind, asset)
         analysis = analyze(kind, data)
         values = sample_values(spec.get("args") or [], analysis.conditionals)

@@ -44,7 +44,7 @@ from .chart_utils import (
 )
 from .layouts import LayoutResolver, role_for_slide
 from .schema import Bullet, coerce_slides
-from .templates import open_template, select_template
+from .templates import TemplateSpec, open_template, select_template
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,8 @@ class PowerpointPresentation(SlideHelpers):
                  footer_text: Optional[str] = None,
                  show_slide_numbers: bool = False,
                  language: Optional[str] = None,
-                 template: Optional[str] = None):
+                 template: Optional[str] = None,
+                 template_spec: Optional[TemplateSpec] = None):
         """Initialize and build presentation.
 
         Args:
@@ -72,6 +73,12 @@ class PowerpointPresentation(SlideHelpers):
             language: BCP-47 tag (e.g. "cs-CZ") stamped on every text run so
                 the deck is proof-read in the right language.
             template: Name of a registered template. Overrides *format*.
+            template_spec: An already-resolved template to build on, bypassing
+                the registry lookup. Overrides *template*. This exists for the
+                admin UI's preview, which must render a template the admin has
+                uploaded but not yet saved — going through the registry would
+                mean either finding nothing or writing the entry before the
+                admin has agreed to it.
         """
         if not slides:
             raise ValueError("At least one slide is required")
@@ -85,7 +92,7 @@ class PowerpointPresentation(SlideHelpers):
         )
 
         self.spec = None
-        self.presentation = self._create_presentation(format, template)
+        self.presentation = self._create_presentation(format, template, template_spec)
         self._layouts = LayoutResolver(
             self.presentation, self.spec.layouts if self.spec else None
         )
@@ -118,7 +125,8 @@ class PowerpointPresentation(SlideHelpers):
         self.warnings.append(entry)
         logger.warning("[pptx] %s", entry)
 
-    def _create_presentation(self, format: str, template: Optional[str] = None) -> Presentation:
+    def _create_presentation(self, format: str, template: Optional[str] = None,
+                             template_spec: Optional[TemplateSpec] = None) -> Presentation:
         """Create the presentation from the selected registered template."""
         if format not in VALID_SLIDE_FORMATS:
             logger.warning(
@@ -130,7 +138,10 @@ class PowerpointPresentation(SlideHelpers):
             )
             format = DEFAULT_SLIDE_FORMAT
 
-        spec, note = select_template(template, None if template else format)
+        if template_spec is not None:
+            spec, note = template_spec, None
+        else:
+            spec, note = select_template(template, None if template else format)
         if note:
             self.warnings.append(note)
 
