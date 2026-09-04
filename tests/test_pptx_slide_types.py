@@ -15,7 +15,7 @@ sys.path.insert(0, str(project_root))
 
 import pytest
 from pptx import Presentation as PptxReader
-from pptx.enum.shapes import MSO_SHAPE_TYPE
+from pptx.enum.shapes import MSO_SHAPE_TYPE, PP_PLACEHOLDER
 from pptx.util import Emu, Inches
 
 from pptx_tools.schema import coerce_slides
@@ -205,6 +205,55 @@ class TestTimeline:
     def test_two_steps_minimum(self):
         with pytest.raises(ValueError):
             coerce_slides([{"type": "timeline", "steps": [{"label": "only"}]}])
+
+    @pytest.mark.parametrize("fmt", ["16:9", "4:3"])
+    @pytest.mark.parametrize("count", [2, 3, 4, 5, 6])
+    def test_detail_stays_inside_a_short_content_box(self, fmt, count):
+        """A short body placeholder must shrink the shapes, not push detail out.
+
+        Sizing the chevrons first and hanging the captions underneath overflowed
+        the content rectangle by 0.54in on the section-header layout, which an
+        explicit ``layout`` override can select. On the shipped templates that
+        still landed on the slide; a custom template with a low, short
+        placeholder would have put the detail off the slide entirely.
+        """
+        pres = build([{"type": "timeline", "title": "Roadmap",
+                       "layout": "Záhlaví oddílu",
+                       "steps": [{"label": f"S{i}", "detail": "detail line " * 4}
+                                 for i in range(count)]}], fmt)
+        doc = reload_presentation(pres)
+        slide = doc.slides[0]
+
+        body = max(
+            (p for p in slide.slide_layout.placeholders
+             if p.placeholder_format.type in (PP_PLACEHOLDER.BODY, PP_PLACEHOLDER.OBJECT)),
+            key=lambda p: (p.width or 0) * (p.height or 0),
+        )
+        box_bottom = body.top + body.height
+        drawn = [s for s in slide.shapes if s.top is not None and s.top >= body.top]
+        assert drawn, "expected the timeline to draw into the body rectangle"
+        assert max(s.top + s.height for s in drawn) <= box_bottom
+        assert max(s.top + s.height for s in drawn) <= doc.slide_height
+
+    def test_detail_is_dropped_with_a_warning_when_there_is_no_room(self):
+        """Better a reported omission than captions drawn off the slide."""
+        pres = build([{"type": "timeline", "steps": [
+            {"label": "A", "detail": "x"}, {"label": "B", "detail": "y"},
+        ]}])
+        gap, height = pres._timeline_detail_band(pres.slides[0].steps, Inches(1.0), 0)
+
+        assert (gap, height) == (0, 0)
+        assert any("too short to fit step detail" in w for w in pres.warnings)
+
+    def test_detail_band_survives_a_merely_tight_content_box(self):
+        """The drop is a last resort; 1.2in is still enough to caption."""
+        pres = build([{"type": "timeline", "steps": [
+            {"label": "A", "detail": "x"}, {"label": "B", "detail": "y"},
+        ]}])
+        gap, height = pres._timeline_detail_band(pres.slides[0].steps, Inches(1.2), 0)
+
+        assert height > 0
+        assert pres.warnings == []
 
 
 # =============================================================================

@@ -27,6 +27,8 @@ from .constants import (
     DEFAULT_BODY_FONT_SIZE, DEFAULT_SUBTITLE_FONT_SIZE,
     DEFAULT_CAPTION_FONT_SIZE, DEFAULT_QUOTE_FONT_SIZE,
     KPI_VALUE_FONT_SIZE, TIMELINE_DETAIL_FONT_SIZE,
+    TIMELINE_STEP_HEIGHT, TIMELINE_STEP_MIN_HEIGHT,
+    TIMELINE_DETAIL_GAP, TIMELINE_DETAIL_HEIGHT,
     TABLE_HEADER_FILL,
     DEFAULT_SLIDE_FORMAT, VALID_SLIDE_FORMATS,
 )
@@ -662,6 +664,28 @@ class PowerpointPresentation(SlideHelpers):
 
         self._add_speaker_notes(slide, slide_data.notes)
 
+    def _timeline_detail_band(self, steps, height, index: int):
+        """Height to reserve under the shapes for step detail, as (gap, height).
+
+        Returns ``(0, 0)`` when no step has detail, or when the content
+        rectangle is too short to carry a legible caption — in which case the
+        detail is dropped and reported, rather than drawn off the slide.
+        """
+        if not any(step.detail for step in steps):
+            return 0, 0
+
+        wanted = TIMELINE_DETAIL_GAP + TIMELINE_DETAIL_HEIGHT
+        if height - wanted >= TIMELINE_STEP_MIN_HEIGHT:
+            return TIMELINE_DETAIL_GAP, TIMELINE_DETAIL_HEIGHT
+
+        self._warn(
+            index,
+            "the content area is too short to fit step detail under the timeline "
+            "shapes; the detail lines were dropped. Use a layout with a taller "
+            "body area, or move the detail into speaker notes.",
+        )
+        return 0, 0
+
     def _build_timeline_slide(self, slide_data, index: int) -> None:
         """Build a row of steps as chevrons or boxes.
 
@@ -677,8 +701,17 @@ class PowerpointPresentation(SlideHelpers):
         gutter = Inches(-0.12) if slide_data.style == "chevron" else Inches(0.15)
 
         step_width = int((width - gutter * (len(steps) - 1)) / len(steps))
-        step_height = min(height, Inches(1.1))
-        step_top = top + int(max(0, (height - step_height)) / 3)
+
+        # Reserve the detail band up front. Sizing the shapes first and then
+        # hanging the captions underneath overflowed the content rectangle on
+        # any layout with a short body placeholder — an explicit ``layout``
+        # override onto a section-header layout put the detail lines 0.54in
+        # below the box, and a custom template with a low, short placeholder
+        # would put them off the slide entirely.
+        gap, detail_height = self._timeline_detail_band(steps, height, index)
+        band = gap + detail_height
+        step_height = min(TIMELINE_STEP_HEIGHT, max(TIMELINE_STEP_MIN_HEIGHT, height - band))
+        step_top = top + int(max(0, (height - (step_height + band))) / 3)
 
         for position, step in enumerate(steps):
             shape = slide.shapes.add_shape(
@@ -698,12 +731,12 @@ class PowerpointPresentation(SlideHelpers):
             label.font.size = DEFAULT_CAPTION_FONT_SIZE
             label.font.bold = True
 
-            if step.detail:
+            if step.detail and detail_height:
                 # Detail below the shape, so a long line cannot burst the chevron.
                 caption = slide.shapes.add_textbox(
                     left + position * (step_width + gutter),
-                    step_top + step_height + Inches(0.1),
-                    step_width, Inches(0.8),
+                    step_top + step_height + gap,
+                    step_width, detail_height,
                 )
                 caption.text_frame.word_wrap = True
                 detail = caption.text_frame.paragraphs[0]
