@@ -7,6 +7,7 @@ from xlsx_tools import _markdown_to_excel_buffer
 from docx_tools import _markdown_to_word_buffer
 from docx_tools.dynamic_docx_tools import register_docx_template_tools_from_yaml
 from pptx_tools import _create_presentation_buffer, Slides
+from pptx_tools.templates import load_specs as load_template_specs, validate_templates
 from email_tools import _create_eml_buffer
 from email_tools.dynamic_email_tools import register_email_template_tools_from_yaml
 from pathlib import Path
@@ -138,6 +139,15 @@ if _has_templates(_docx_yaml, "docx_templates.d"):
         logger.exception("[dynamic-docx] Failed to register DOCX templates from %s: %s", _docx_yaml, e)
 else:
     logger.info("[dynamic-docx] No DOCX templates found under %s - skipping", _CONFIG_DIR)
+
+# PowerPoint templates: validated once at startup so a template missing the
+# layouts the tool needs shows up in the log now, rather than as a strangely
+# laid-out deck later. Never fatal — a bad template degrades to the built-in
+# theme at build time.
+try:
+    validate_templates()
+except Exception as e:
+    logger.exception("[pptx-templates] Template validation failed: %s", e)
 
 
 @mcp.tool(
@@ -328,6 +338,7 @@ async def create_powerpoint_presentation(
     footer_text: Annotated[Optional[str], Field(description="Footer text displayed on every slide (e.g., company name, confidentiality notice).", default=None)] = None,
     show_slide_numbers: Annotated[bool, Field(description="Show slide numbers on every slide.", default=False)] = False,
     language: Annotated[Optional[str], Field(description="Language tag for proofing in PowerPoint (e.g. 'cs-CZ' for Czech, 'en-US' for English, 'de-DE' for German). Set this when the deck is not in the template's own language, otherwise every word is flagged as a misspelling.", default=None)] = None,
+    template: Annotated[Optional[str], Field(description="Name of a registered template to build on. Call list_presentation_templates to see what is available, along with each one's aspect ratio and layout names. Overrides 'format'. Omit to use the default template for the requested aspect ratio.", default=None)] = None,
     file_name: Annotated[Optional[str], Field(description="Custom filename for the output file (without extension). If not provided, a unique identifier will be used.", default=None)] = None,
     add_unique_prefix: Annotated[Optional[bool], Field(description="If true, adds 8-char UUID prefix to filename for uniqueness. If not set, defaults to True for traditional storage backends (LOCAL/S3/GCS/AZURE/MINIO) and False for LibreChat.", default=None)] = None,
 ) -> Union[str, dict]:
@@ -351,6 +362,7 @@ async def create_powerpoint_presentation(
             footer_text=footer_text,
             show_slide_numbers=show_slide_numbers,
             language=language,
+            template=template,
         )
 
         # Upload and format response (handles both LIBRECHAT and traditional backends)
@@ -387,6 +399,53 @@ async def create_powerpoint_presentation(
     except Exception as e:
         logger.error(f"Error creating PowerPoint presentation: {e}", exc_info=True)
         raise ToolError(f"Error creating PowerPoint presentation: {e}")
+
+@mcp.tool(
+    name="list_presentation_templates",
+    description="Lists the PowerPoint templates this server can build on, with their aspect ratio and layout names.",
+    tags={"powerpoint", "presentation", "templates"},
+    annotations={"title": "PowerPoint Template Lister", "readOnlyHint": True},
+)
+async def list_presentation_templates(
+    include_layouts: Annotated[bool, Field(description="Include each template's layout names and the slide-type role each one serves. Useful before setting a slide's 'layout' field.", default=False)] = False,
+) -> dict:
+    """Report the registered PowerPoint templates.
+
+    This is what makes the per-slide ``layout`` field usable: a model cannot
+    name a layout it has no way to discover.
+
+    Returns:
+        A dict with 'templates' (name, description, aspect, default) and, when
+        include_layouts is set, each template's layouts and the roles they fill.
+    """
+    logger.info("Listing PowerPoint templates (include_layouts=%s)", include_layouts)
+
+    try:
+        specs = await run_blocking(load_template_specs)
+        result = {"templates": [spec.summary() for spec in specs]}
+
+        if include_layouts:
+            reports = await run_blocking(validate_templates)
+            by_name = {report["name"]: report for report in reports}
+            for entry in result["templates"]:
+                report = by_name.get(entry["name"], {})
+                entry["layouts"] = report.get("layouts", [])
+                entry["roles"] = report.get("coverage", {})
+                if report.get("missing_roles"):
+                    entry["missing_roles"] = report["missing_roles"]
+                if report.get("error"):
+                    entry["error"] = report["error"]
+
+        if not result["templates"]:
+            result["note"] = (
+                "No templates are registered; presentations use the built-in "
+                "PowerPoint theme."
+            )
+        return result
+    except Exception as e:
+        logger.error(f"Error listing presentation templates: {e}", exc_info=True)
+        raise ToolError(f"Error listing presentation templates: {e}")
+
 
 @mcp.tool(
     name="create_email_draft",

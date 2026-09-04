@@ -535,10 +535,70 @@ Place files in the `custom_templates/` folder:
 
 | Document | Filename | Notes |
 |----------|----------|-------|
-| PowerPoint 4:3 | `custom_pptx_template_4_3.pptx` | |
-| PowerPoint 16:9 | `custom_pptx_template_16_9.pptx` | |
+| PowerPoint 4:3 | `custom_pptx_template_4_3.pptx` | Or register several by name — see below |
+| PowerPoint 16:9 | `custom_pptx_template_16_9.pptx` | Or register several by name — see below |
 | Word | `custom_docx_template.docx` | |
 | Email wrapper | `custom_email_template.html` | Base it on `default_templates/default_email_template.html` |
+
+### Named PowerPoint Templates
+
+<details>
+<summary><strong>📊 Register several decks, and how layouts are matched</strong></summary>
+
+Dropping the two files above is still all you need. To offer your AI a *choice*
+of decks — or to configure one — create `config/pptx_templates.yaml`:
+
+```yaml
+templates:
+  - name: corporate_16_9
+    description: Brand deck, widescreen. Use for client-facing presentations.
+    pptx_path: corporate_16_9.pptx    # bare filename, in custom_templates/
+    default: true
+    defaults:
+      footer_text: "ACME s.r.o. · Confidential"
+      language: cs-CZ
+  - name: legacy_4_3
+    pptx_path: legacy_4_3.potx        # .potx works too
+```
+
+Each entry becomes a value for the `template` argument, and
+`list_presentation_templates` reports them with their aspect ratio and layout
+names. Anything under `defaults:` applies when the tool call does not set it.
+
+**Layouts are matched by name and by shape, never by position.** A template
+that reorders, renames or deletes layouts still works — previously a reordered
+template silently built the title slide on the section layout. Resolution order:
+
+1. the `layout` field on the slide itself,
+2. a `layouts:` mapping in the template's entry,
+3. automatic detection from each layout's placeholders,
+4. the positional index, with a warning returned to the caller.
+
+Detection reads placeholder *types*, so it is language-independent — a Czech or
+German template classifies from the same rules as an English one. It recognises
+`title`, `section`, `content`, `two_column`, `comparison`, `image_text`,
+`title_only` and `blank`. Vertical-text layouts are never picked automatically,
+since they share a signature with their horizontal counterparts; name one
+explicitly if you want it.
+
+Only add a `layouts:` mapping when detection picks the wrong one:
+
+```yaml
+    layouts:
+      content: "Brand Body"
+      section: "Brand Divider"
+```
+
+Every registered template is opened once at startup and its coverage logged, so
+a template missing a layout the tool needs shows up then rather than as a
+strangely laid-out deck later. Templates are re-read when the config or
+template directories change, so a new or edited template takes effect **without
+restarting the server**.
+
+The file `config/pptx_templates.yaml` in this repository documents every option
+in full.
+
+</details>
 
 ### Dynamic Email Templates
 

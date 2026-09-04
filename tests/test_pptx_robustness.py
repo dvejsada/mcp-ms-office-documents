@@ -349,12 +349,26 @@ def template_with_sample_slide(tmp_path):
 
 @pytest.fixture
 def use_template(monkeypatch):
-    """Point the builder at a specific template file, bypassing the cache."""
+    """Point the builder at a specific template file.
+
+    Phase 2 replaced the builder's process-lifetime path cache with the
+    registry's mtime-checked one, so this now redirects the template search
+    directories and drops the registry cache.
+    """
+    from pptx_tools import templates as templates_mod
+    import template_utils
+
     def _use(path):
-        slide_builder._template_cache.clear()
-        monkeypatch.setattr(slide_builder, "find_pptx_templates", lambda: (str(path), str(path)))
+        path = Path(path)
+        monkeypatch.setattr(
+            template_utils, "_candidate_dirs",
+            lambda: [path.parent, project_root / "default_templates"],
+        )
+        templates_mod.clear_cache()
+
+    templates_mod.clear_cache()
     yield _use
-    slide_builder._template_cache.clear()
+    templates_mod.clear_cache()
 
 
 class TestTemplateSlideRemoval:

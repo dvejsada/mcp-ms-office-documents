@@ -13,55 +13,36 @@ deck was fine and had no way to correct itself.
 import io
 import copy
 import logging
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, List, Optional, Sequence
 
 from pptx import Presentation
+from pptx.enum.shapes import PP_PLACEHOLDER
 from pptx.enum.text import PP_ALIGN
 from pptx.util import Inches, Pt
 from pptx.oxml.ns import qn
 from pptx.oxml import parse_xml
 
-from template_utils import find_pptx_templates
 from .constants import (
-    TITLE_LAYOUT, SECTION_LAYOUT, CONTENT_LAYOUT,
-    TWO_COLUMN_LAYOUT, TWO_COLUMN_TEXT_LAYOUT,
     DEFAULT_BODY_FONT_SIZE, DEFAULT_SUBTITLE_FONT_SIZE,
     DEFAULT_CAPTION_FONT_SIZE, DEFAULT_QUOTE_FONT_SIZE,
     TABLE_HEADER_FILL,
-    DEFAULT_SLIDE_FORMAT, SLIDE_FORMAT_16_9, VALID_SLIDE_FORMATS,
+    DEFAULT_SLIDE_FORMAT, VALID_SLIDE_FORMATS,
 )
 from .helpers import (
     SlideHelpers,
-    apply_autofit, body_to_bullets, estimate_text_fill, parse_table_data, resolve_fill, set_runs_language, table_overflows,
+    apply_autofit, body_to_bullets, estimate_text_fill, parse_table_data,
+    resolve_fill, set_runs_language, table_overflows,
 )
 from .inline_formatting import needs_inline_processing, apply_inline_formatting
 from .chart_utils import (
     add_chart_to_slide, add_scatter_to_slide, configure_data_labels,
     set_axis_titles, ChartDataError,
 )
+from .layouts import LayoutResolver, role_for_slide
 from .schema import coerce_slides
+from .templates import open_template, select_template
 
 logger = logging.getLogger(__name__)
-
-
-# Cache for loaded template paths (resolved once at first use)
-_template_cache: Dict[str, Any] = {}
-
-
-def _get_templates():
-    """Get presentation templates for 4:3 and 16:9 formats (cached).
-
-    Returns:
-        Tuple of (path_4_3, path_16_9) template paths.
-    """
-    if "resolved" not in _template_cache:
-        t43, t169 = find_pptx_templates()
-        if not t43 or not t169:
-            logger.info("One or more PPT templates missing; using PowerPoint defaults")
-        _template_cache["4:3"] = t43
-        _template_cache["16:9"] = t169
-        _template_cache["resolved"] = True
-    return _template_cache.get("4:3"), _template_cache.get("16:9")
 
 
 class PowerpointPresentation(SlideHelpers):
@@ -71,19 +52,22 @@ class PowerpointPresentation(SlideHelpers):
                  author: Optional[str] = None,
                  footer_text: Optional[str] = None,
                  show_slide_numbers: bool = False,
-                 language: Optional[str] = None):
+                 language: Optional[str] = None,
+                 template: Optional[str] = None):
         """Initialize and build presentation.
 
         Args:
             slides: Slide models, or plain dicts in either the current or the
                 previous key spelling — both are validated through
                 :func:`~pptx_tools.schema.coerce_slides`.
-            format: Presentation format ("4:3" or "16:9").
+            format: Presentation format ("4:3" or "16:9"). Ignored when
+                *template* names a registered template.
             author: Author name stored in document metadata/properties.
             footer_text: Optional footer text displayed on all slides.
             show_slide_numbers: Whether to show slide numbers on all slides.
             language: BCP-47 tag (e.g. "cs-CZ") stamped on every text run so
                 the deck is proof-read in the right language.
+            template: Name of a registered template. Overrides *format*.
         """
         if not slides:
             raise ValueError("At least one slide is required")
@@ -92,19 +76,31 @@ class PowerpointPresentation(SlideHelpers):
         self.slides = coerce_slides(slides)
 
         logger.info(
-            "Initializing PowerPoint: slides=%d, format=%s", len(self.slides), format
+            "Initializing PowerPoint: slides=%d, format=%s, template=%s",
+            len(self.slides), format, template,
         )
 
-        self.presentation = self._create_presentation(format)
-        self._footer_text = footer_text
-        self._show_slide_numbers = show_slide_numbers
-        self._language = language
+        self.spec = None
+        self.presentation = self._create_presentation(format, template)
+        self._layouts = LayoutResolver(
+            self.presentation, self.spec.layouts if self.spec else None
+        )
+
+        defaults = self.spec.defaults if self.spec else {}
+        self._footer_text = footer_text if footer_text is not None else defaults.get("footer_text")
+        self._show_slide_numbers = (
+            show_slide_numbers if show_slide_numbers else bool(defaults.get("show_slide_numbers"))
+        )
+        self._language = language if language is not None else defaults.get("language")
+        self._table_defaults = defaults.get("table") or {}
+        self._chart_defaults = defaults.get("chart") or {}
+
         self._remove_template_slides()
         self._build_slides(self.slides)
-        if footer_text or show_slide_numbers:
+        if self._footer_text or self._show_slide_numbers:
             self._apply_footer_and_slide_numbers()
-        if language:
-            self._apply_language(language)
+        if self._language:
+            self._apply_language(self._language)
         if author:
             self.presentation.core_properties.author = author
 
@@ -118,8 +114,8 @@ class PowerpointPresentation(SlideHelpers):
         self.warnings.append(entry)
         logger.warning("[pptx] %s", entry)
 
-    def _create_presentation(self, format: str) -> Presentation:
-        """Create presentation with appropriate template."""
+    def _create_presentation(self, format: str, template: Optional[str] = None) -> Presentation:
+        """Create the presentation from the selected registered template."""
         if format not in VALID_SLIDE_FORMATS:
             logger.warning(
                 "Unknown presentation format %r; using %s. Valid formats: %s",
@@ -130,20 +126,42 @@ class PowerpointPresentation(SlideHelpers):
             )
             format = DEFAULT_SLIDE_FORMAT
 
-        template_4_3, template_16_9 = _get_templates()
-        template = template_16_9 if format == SLIDE_FORMAT_16_9 else template_4_3
+        spec, note = select_template(template, None if template else format)
+        if note:
+            self.warnings.append(note)
 
-        if template:
+        if spec is not None:
             try:
-                return Presentation(template)
+                presentation = open_template(spec.path)
+                self.spec = spec
+                logger.info(
+                    "Using template %r (%s, %s)", spec.name, spec.path.name, spec.aspect
+                )
+                return presentation
             except Exception as e:
-                logger.error(f"Failed to load template: {e}")
+                logger.error("Failed to load template %s: %s", spec.path.name, e)
                 self.warnings.append(
-                    f"Template could not be opened ({e}); used the built-in PowerPoint theme."
+                    f"Template {spec.name!r} could not be opened ({e}); "
+                    "used the built-in PowerPoint theme."
                 )
 
-        logger.warning(f"Using default PowerPoint template for {format}")
+        logger.warning("Using the built-in PowerPoint theme for %s", format)
         return Presentation()
+
+    def _new_slide(self, slide_data, index: int):
+        """Add a slide on the layout resolved for its type.
+
+        This is what replaced indexing ``slide_layouts`` by position. A
+        template that reorders or omits layouts is now matched by name and by
+        placeholder signature, and anything approximate about the match is
+        reported to the caller rather than silently producing a deck laid out
+        on the wrong layouts.
+        """
+        role = role_for_slide(slide_data)
+        layout, note = self._layouts.resolve(role, slide_data.layout)
+        if note:
+            self._warn(index, note)
+        return self.presentation.slides.add_slide(layout)
 
     def _remove_template_slides(self) -> None:
         """Remove every slide the template ships with, parts included.
@@ -191,15 +209,6 @@ class PowerpointPresentation(SlideHelpers):
             if builder is None:  # pragma: no cover - schema forbids it
                 raise ValueError(f"No builder for slide type {slide.type!r} at slide {i}")
 
-            # `layout` is accepted now and honoured once template layouts are
-            # resolved by name; say so rather than ignoring it silently.
-            if slide.layout:
-                self._warn(
-                    i,
-                    f"layout {slide.layout!r} was ignored: named layouts are not "
-                    "resolved yet, the default layout for this slide type was used.",
-                )
-
             try:
                 logger.debug("Building slide %d: type=%s", i, slide.type)
                 builder(slide, i)
@@ -213,46 +222,49 @@ class PowerpointPresentation(SlideHelpers):
 
     def _build_title_slide(self, slide_data, index: int) -> None:
         """Build a title slide with title and optional subtitle."""
-        layout = self.presentation.slide_layouts[TITLE_LAYOUT]
-        slide = self.presentation.slides.add_slide(layout)
+        slide = self._new_slide(slide_data, index)
 
-        if len(slide.placeholders) > 0:
-            slide.placeholders[0].text = slide_data.title or ""
-        if len(slide.placeholders) > 1:
-            slide.placeholders[1].text = slide_data.subtitle or ""
+        self._set_title(slide, slide_data.title)
+
+        subtitle = self._placeholder_of_type(
+            slide, (PP_PLACEHOLDER.SUBTITLE, PP_PLACEHOLDER.BODY, PP_PLACEHOLDER.OBJECT)
+        )
+        if subtitle is not None:
+            subtitle.text = slide_data.subtitle or ""
+        elif slide_data.subtitle:
+            self._warn(index, "this layout has no subtitle placeholder; the subtitle was dropped.")
 
         self._add_speaker_notes(slide, slide_data.notes)
 
     def _build_section_slide(self, slide_data, index: int) -> None:
         """Build a section divider slide."""
-        layout = self.presentation.slide_layouts[SECTION_LAYOUT]
-        slide = self.presentation.slides.add_slide(layout)
-
-        if len(slide.placeholders) > 0:
-            slide.placeholders[0].text = slide_data.title or ""
-
+        slide = self._new_slide(slide_data, index)
+        self._set_title(slide, slide_data.title)
         self._add_speaker_notes(slide, slide_data.notes)
 
     def _build_content_slide(self, slide_data, index: int) -> None:
         """Build a content slide with bullet points."""
-        layout = self.presentation.slide_layouts[CONTENT_LAYOUT]
-        slide = self.presentation.slides.add_slide(layout)
-
-        if len(slide.placeholders) > 0:
-            slide.placeholders[0].text = slide_data.title or ""
+        slide = self._new_slide(slide_data, index)
+        self._set_title(slide, slide_data.title)
 
         bullets = body_to_bullets(slide_data.body)
-        if bullets and len(slide.placeholders) > 1:
-            placeholder = slide.placeholders[1]
-            placeholder.text = ""
-            self._fill_bullets(placeholder.text_frame, bullets)
-            self._fit_text(placeholder, bullets, index)
+        if bullets:
+            placeholders = self._content_placeholders(slide)
+            if placeholders:
+                placeholder = placeholders[0]
+                placeholder.text = ""
+                self._fill_bullets(placeholder.text_frame, bullets)
+                self._fit_text(placeholder, bullets, index)
+            else:
+                self._warn(index, "this layout has no body placeholder; the bullets were dropped.")
 
         self._add_speaker_notes(slide, slide_data.notes)
 
     def _build_table_slide(self, slide_data, index: int) -> None:
         """Build a table slide with a styled table."""
-        slide, left, top, width, height = self._add_title_content_slide(slide_data.title or "")
+        slide, left, top, width, height = self._add_title_content_slide(
+            slide_data.title or "", slide=self._new_slide(slide_data, index)
+        )
 
         rows, col_alignments = parse_table_data(slide_data.rows)
         if not rows:
@@ -297,7 +309,9 @@ class PowerpointPresentation(SlideHelpers):
 
     def _build_image_slide(self, slide_data, index: int) -> None:
         """Build a slide with an image from a URL or inline data URI."""
-        slide, left, top, width, height = self._add_title_content_slide(slide_data.title or "")
+        slide, left, top, width, height = self._add_title_content_slide(
+            slide_data.title or "", slide=self._new_slide(slide_data, index)
+        )
 
         caption = slide_data.caption
         max_height = height - (Inches(0.6) if caption else 0)
@@ -340,8 +354,7 @@ class PowerpointPresentation(SlideHelpers):
         left_col, right_col = slide_data.left, slide_data.right
         has_headings = bool(left_col.heading or right_col.heading)
 
-        layout_index = TWO_COLUMN_TEXT_LAYOUT if has_headings else TWO_COLUMN_LAYOUT
-        slide = self.presentation.slides.add_slide(self.presentation.slide_layouts[layout_index])
+        slide = self._new_slide(slide_data, index)
 
         left_bullets = body_to_bullets(left_col.body)
         right_bullets = body_to_bullets(right_col.body)
@@ -372,7 +385,9 @@ class PowerpointPresentation(SlideHelpers):
 
     def _build_chart_slide(self, slide_data, index: int) -> None:
         """Build a slide with a category chart."""
-        slide, left, top, width, height = self._add_title_content_slide(slide_data.title or "")
+        slide, left, top, width, height = self._add_title_content_slide(
+            slide_data.title or "", slide=self._new_slide(slide_data, index)
+        )
 
         chart_data = {
             "categories": slide_data.categories,
@@ -417,7 +432,9 @@ class PowerpointPresentation(SlideHelpers):
 
     def _build_scatter_slide(self, slide_data, index: int) -> None:
         """Build a slide with an XY (scatter) chart."""
-        slide, left, top, width, height = self._add_title_content_slide(slide_data.title or "")
+        slide, left, top, width, height = self._add_title_content_slide(
+            slide_data.title or "", slide=self._new_slide(slide_data, index)
+        )
 
         try:
             add_scatter_to_slide(
@@ -441,7 +458,9 @@ class PowerpointPresentation(SlideHelpers):
 
     def _build_quote_slide(self, slide_data, index: int) -> None:
         """Build a quote/citation slide."""
-        slide, left, top, width, height = self._add_title_content_slide(slide_data.title or "")
+        slide, left, top, width, height = self._add_title_content_slide(
+            slide_data.title or "", slide=self._new_slide(slide_data, index)
+        )
 
         quote_box = slide.shapes.add_textbox(left, top, width, height)
         tf = quote_box.text_frame
