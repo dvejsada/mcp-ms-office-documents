@@ -458,10 +458,15 @@ class TestWarnings:
         ])
         assert pres.warnings == []
 
-    def test_layout_override_is_reported_as_ignored(self):
-        """Accepted by the schema, not yet honoured — say so rather than drop it."""
+    def test_unknown_layout_name_is_reported(self):
+        """A layout the template does not have is named, not silently ignored.
+
+        Phase 1 accepted `layout` without honouring it; Phase 2 resolves it, so
+        the warning now covers only names the template really lacks. Resolution
+        itself is covered in test_pptx_templates.py.
+        """
         pres = build([{"type": "content", "title": "C", "body": "- a", "layout": "Brand Body"}])
-        assert any("Brand Body" in w and "ignored" in w for w in pres.warnings)
+        assert any("Brand Body" in w for w in pres.warnings)
 
     def test_overfull_body_warns(self):
         long_bullets = [{"text": "A fairly long bullet line that will wrap once or twice " * 3}

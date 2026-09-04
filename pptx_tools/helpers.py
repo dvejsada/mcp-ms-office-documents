@@ -10,6 +10,7 @@ import math
 import re
 from typing import List, Tuple, Optional, Any
 
+from pptx.enum.shapes import PP_PLACEHOLDER
 from pptx.enum.text import PP_ALIGN
 from pptx.util import Emu, Inches, Pt
 from pptx.dml.color import RGBColor
@@ -356,28 +357,37 @@ class SlideHelpers:
         """Get slide width and height."""
         return self.presentation.slide_width, self.presentation.slide_height
 
-    def _add_title_content_slide(self, title: str = ""):
-        """Add a Title and Content slide and return slide with content placeholder info.
+    def _add_title_content_slide(self, title: str = "", slide=None):
+        """Return a content slide plus the rectangle its body placeholder occupies.
 
         Args:
             title: Title text for the slide.
+            slide: An already-created slide to use. When omitted a slide is
+                added on the positional content layout — kept only for callers
+                outside the builder; the builder resolves the layout by role
+                and passes the slide in.
 
         Returns:
             Tuple of (slide, content_left, content_top, content_width, content_height)
         """
-        layout = self.presentation.slide_layouts[CONTENT_LAYOUT]
-        slide = self.presentation.slides.add_slide(layout)
+        if slide is None:
+            layout = self.presentation.slide_layouts[CONTENT_LAYOUT]
+            slide = self.presentation.slides.add_slide(layout)
 
-        # Set title
-        if title and len(slide.placeholders) > 0:
-            slide.placeholders[0].text = title
+        if title:
+            self._set_title(slide, title)
 
-        # Get content placeholder bounds (idx 1)
-        content_placeholder = None
-        for placeholder in slide.placeholders:
-            if placeholder.placeholder_format.idx == 1:
-                content_placeholder = placeholder
-                break
+        # Take the LARGEST body/object placeholder's rectangle, whatever its
+        # idx. Not the first: on a Comparison layout (heading, content, heading,
+        # content) the first is the small heading strip, so a table or chart
+        # placed there was squeezed into a 0.9-inch band instead of the 4-inch
+        # content box. Largest-by-area is the content region on every layout
+        # that has more than one.
+        content_placeholder = max(
+            self._content_placeholders(slide),
+            key=lambda ph: (ph.width or 0) * (ph.height or 0),
+            default=None,
+        )
 
         if content_placeholder:
             left = content_placeholder.left
@@ -396,6 +406,37 @@ class SlideHelpers:
             height = slide_height - top - Inches(0.5)
 
         return slide, left, top, width, height
+
+    def _set_title(self, slide, text: Optional[str]) -> bool:
+        """Put *text* in the slide's title placeholder, if it has one.
+
+        Uses ``shapes.title`` rather than ``placeholders[0]``. That subscript is
+        a lookup by placeholder *idx*, not by position, while the ``len()``
+        guard around it counted positions — so on a layout whose title is not
+        idx 0, the guard passed and the lookup raised KeyError.
+        """
+        placeholder = slide.shapes.title
+        if placeholder is None:
+            return False
+        placeholder.text = text or ""
+        return True
+
+    def _placeholder_of_type(self, slide, kinds, skip_title: bool = True):
+        """First placeholder whose type is in *kinds*, or None."""
+        for shape in slide.placeholders:
+            kind = shape.placeholder_format.type
+            if skip_title and kind in (PP_PLACEHOLDER.TITLE, PP_PLACEHOLDER.CENTER_TITLE):
+                continue
+            if kind in kinds:
+                return shape
+        return None
+
+    def _content_placeholders(self, slide) -> List[Any]:
+        """Body/object placeholders of a slide, in document order."""
+        return [
+            shape for shape in slide.placeholders
+            if shape.placeholder_format.type in (PP_PLACEHOLDER.BODY, PP_PLACEHOLDER.OBJECT)
+        ]
 
     def _add_speaker_notes(self, slide, notes_text: Optional[str]) -> None:
         """Add speaker notes to a slide.

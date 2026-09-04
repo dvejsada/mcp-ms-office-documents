@@ -16,6 +16,7 @@ def _create_presentation_buffer(
     footer_text: Optional[str] = None,
     show_slide_numbers: bool = False,
     language: Optional[str] = None,
+    template: Optional[str] = None,
 ) -> Tuple[io.BytesIO, List[str]]:
     """Create a PowerPoint presentation and return its bytes and any warnings.
 
@@ -28,6 +29,7 @@ def _create_presentation_buffer(
     :param footer_text: Optional footer text displayed on all slides
     :param show_slide_numbers: Whether to show slide numbers
     :param language: BCP-47 tag stamped on every run for proofing
+    :param template: Name of a registered template; overrides *format*
     :return: ``(buffer, warnings)`` — the buffer is positioned at the start,
         and warnings describe anything the builder had to work around so the
         caller can act on it instead of only seeing it in the server log.
@@ -43,6 +45,7 @@ def _create_presentation_buffer(
         footer_text=footer_text,
         show_slide_numbers=show_slide_numbers,
         language=language,
+        template=template,
     )
     return presentation.save(), presentation.warnings
 
@@ -55,6 +58,7 @@ def create_presentation(
     footer_text: Optional[str] = None,
     show_slide_numbers: bool = False,
     language: Optional[str] = None,
+    template: Optional[str] = None,
 ) -> str:
     """Create a PowerPoint presentation from structured slides and upload it.
 
@@ -73,6 +77,7 @@ def create_presentation(
         footer_text=footer_text,
         show_slide_numbers=show_slide_numbers,
         language=language,
+        template=template,
     )
 
     try:
