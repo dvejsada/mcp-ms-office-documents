@@ -6,21 +6,26 @@ functions for template loading and data parsing.
 """
 
 import logging
+import math
 import re
 from typing import List, Tuple, Optional, Any
 
 from pptx.enum.text import PP_ALIGN
-from pptx.util import Inches
+from pptx.util import Emu, Inches, Pt
 from pptx.dml.color import RGBColor
 from pptx.oxml import parse_xml
+from pptx.oxml.ns import qn
 
 from .constants import (
     CONTENT_LAYOUT,
     DEFAULT_BODY_FONT_SIZE,
     MARGIN_LEFT, MAX_INDENT_LEVEL,
+    AVG_CHAR_WIDTH_RATIO, LINE_HEIGHT_RATIO, MIN_AUTOFIT_SCALE,
+    TABLE_MIN_FONT_SIZE, TABLE_ROW_HEIGHT_PER_POINT,
     TABLE_HEADER_FILL, TABLE_HEADER_TEXT, TABLE_ALT_ROW_FILL,
 )
-from .image_utils import download_image, ImageDownloadError, ImageValidationError
+from .schema import Bullet, THEME_COLORS
+from .image_utils import load_image, ImageDownloadError, ImageValidationError
 from .inline_formatting import needs_inline_processing, apply_inline_formatting
 
 logger = logging.getLogger(__name__)
@@ -140,6 +145,173 @@ def parse_color(color_hex: Any, default: RGBColor) -> RGBColor:
             color_hex, default,
         )
         return default
+
+
+_BULLET_LINE_RE = re.compile(r'^(\s*)[-*+]\s+(.*)$')
+
+
+def body_to_bullets(body: Any) -> List[Bullet]:
+    """Normalise a slide ``body`` into a list of :class:`Bullet`.
+
+    Accepts what the schema allows: a markdown bullet string, or explicit
+    bullet objects. In the string form, nesting comes from indentation and the
+    unit is inferred rather than fixed — the distinct indent widths present are
+    sorted and mapped onto levels 1, 2, 3…, so two-space, four-space and tab
+    indentation all work without the caller declaring which they used. A line
+    with no bullet marker is treated as a top-level bullet.
+    """
+    if body is None:
+        return []
+
+    if isinstance(body, list):
+        out: List[Bullet] = []
+        for item in body:
+            if isinstance(item, Bullet):
+                out.append(item)
+            elif isinstance(item, dict):
+                out.append(Bullet(**item))
+            else:
+                out.append(Bullet(text=cell_to_text(item)))
+        return out
+
+    if not isinstance(body, str):
+        return [Bullet(text=cell_to_text(body))]
+
+    parsed: List[Tuple[int, str]] = []
+    for line in body.splitlines():
+        if not line.strip():
+            continue
+        match = _BULLET_LINE_RE.match(line)
+        if match:
+            indent = len(match.group(1).replace('\t', '    '))
+            text = match.group(2).strip()
+        else:
+            indent = 0
+            text = line.strip()
+        if text:
+            parsed.append((indent, text))
+
+    if not parsed:
+        return []
+
+    # Map the distinct indent widths onto consecutive levels.
+    widths = sorted({indent for indent, _ in parsed})
+    level_of = {width: min(rank + 1, MAX_INDENT_LEVEL) for rank, width in enumerate(widths)}
+
+    return [Bullet(text=text, level=level_of[indent]) for indent, text in parsed]
+
+
+def estimate_text_fill(
+    bullets: List[Bullet],
+    width: int,
+    height: int,
+    font_size_pt: float = 18.0,
+) -> float:
+    """Estimate how full a text box will be, as a ratio (1.0 = exactly full).
+
+    Deliberately approximate — see the constants module. Used to decide whether
+    to ask PowerPoint to shrink the text and whether to warn the caller.
+    """
+    width_in = Emu(width).inches
+    height_in = Emu(height).inches
+    if width_in <= 0 or height_in <= 0 or not bullets:
+        return 0.0
+
+    char_width_in = AVG_CHAR_WIDTH_RATIO * font_size_pt / 72.0
+    line_height_in = LINE_HEIGHT_RATIO * font_size_pt / 72.0
+
+    total_lines = 0
+    for bullet in bullets:
+        # Deeper levels are indented, so less width is available for text.
+        indent_in = 0.3 * (bullet.level - 1)
+        usable_in = max(width_in - indent_in, char_width_in)
+        chars_per_line = max(int(usable_in / char_width_in), 1)
+        total_lines += max(1, math.ceil(len(bullet.text) / chars_per_line))
+
+    return (total_lines * line_height_in) / height_in
+
+
+def apply_autofit(text_frame, scale: Optional[float] = None) -> None:
+    """Mark a text frame as shrink-to-fit, optionally pinning the shrink factor.
+
+    ``<a:normAutofit/>`` alone tells PowerPoint to shrink the text, but it
+    recomputes the factor only when the deck is opened for editing; some
+    viewers render the text at full size and overflowing until then. Writing an
+    explicit ``fontScale`` gives those viewers something to honour immediately,
+    and PowerPoint overwrites it with its own exact value on the first edit.
+    """
+    bodyPr = text_frame._txBody.find(qn('a:bodyPr'))
+    if bodyPr is None:
+        return
+
+    for tag in ('a:noAutofit', 'a:spAutoFit', 'a:normAutofit'):
+        existing = bodyPr.find(qn(tag))
+        if existing is not None:
+            bodyPr.remove(existing)
+
+    autofit = parse_xml(
+        '<a:normAutofit xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"/>'
+    )
+    if scale is not None and scale < 1.0:
+        percent = max(scale, MIN_AUTOFIT_SCALE)
+        autofit.set('fontScale', str(int(percent * 100000)))
+        autofit.set('lnSpcReduction', '10000')
+    bodyPr.append(autofit)
+
+
+def set_runs_language(shape_or_frame, language: str) -> None:
+    """Stamp ``lang`` on every run of a text frame.
+
+    Without this the runs inherit the template's language, so a Czech deck is
+    proof-read against the template's locale and every word is underlined as a
+    misspelling.
+    """
+    text_frame = getattr(shape_or_frame, "text_frame", shape_or_frame)
+    try:
+        paragraphs = text_frame.paragraphs
+    except AttributeError:
+        return
+
+    for paragraph in paragraphs:
+        for run in paragraph.runs:
+            run._r.get_or_add_rPr().set('lang', language)
+        endParaRPr = paragraph._p.find(qn('a:endParaRPr'))
+        if endParaRPr is not None:
+            endParaRPr.set('lang', language)
+
+
+def fit_table_font_size(row_count: int, height: int) -> int:
+    """Pick a cell font size that keeps *row_count* rows inside *height*.
+
+    PowerPoint grows a table to fit its text, so a tall table silently runs off
+    the bottom of the slide rather than shrinking. Choosing the size up front
+    from the row budget is what keeps a 20-row table on the slide.
+    """
+    height_pt = max(Emu(height).inches * 72.0, 1.0)
+    per_row_pt = height_pt / max(row_count, 1)
+    size = int(per_row_pt / TABLE_ROW_HEIGHT_PER_POINT)
+    return max(TABLE_MIN_FONT_SIZE, min(size, int(DEFAULT_BODY_FONT_SIZE.pt)))
+
+
+def table_overflows(row_count: int, height: int, font_size_pt: int) -> bool:
+    """True when the table still cannot fit even at *font_size_pt*."""
+    needed_pt = row_count * font_size_pt * TABLE_ROW_HEIGHT_PER_POINT
+    return needed_pt > Emu(height).inches * 72.0
+
+
+def resolve_fill(color: Optional[str], default: RGBColor):
+    """Return either an ``RGBColor`` or a theme colour name for *color*.
+
+    The schema accepts both ``#RRGGBB`` and a theme name such as ``accent1``;
+    they need different DrawingML (``srgbClr`` vs ``schemeClr``), so the caller
+    is told which it got.
+    """
+    if color is None:
+        return default
+    text = str(color).strip()
+    if text.lower() in THEME_COLORS:
+        return text.lower()
+    return parse_color(text, default)
 
 
 def coerce_indent_level(value: Any) -> int:
@@ -301,50 +473,54 @@ class SlideHelpers:
         **bold**, *italic*, ***bold italic***, ~~strikethrough~~,
         __underline__, `code`.
 
-        A bullet may also be given as a bare string, which is treated as
-        ``{"text": <string>}`` at the top level.
+        Accepts anything :func:`body_to_bullets` understands: a markdown
+        string, explicit :class:`Bullet` objects, dicts, or bare strings.
 
         Args:
             text_frame: PowerPoint text frame object (from placeholder or textbox).
-            items: List of dicts with 'text' and 'indentation_level' keys.
+            items: Slide body — markdown string or bullet objects.
             font_size: Optional font size for items.
+
+        Returns:
+            The bullets actually rendered, so the caller can measure them.
         """
-        if not items:
-            return
+        bullets = body_to_bullets(items)
+        if not bullets:
+            return []
 
         text_frame.word_wrap = True
 
-        for i, item in enumerate(items):
-            if not isinstance(item, dict):
-                item = {"text": cell_to_text(item)}
-
+        for i, bullet in enumerate(bullets):
             if i == 0:
                 para = text_frame.paragraphs[0]
             else:
                 para = text_frame.add_paragraph()
 
-            item_text = cell_to_text(item.get("text", ""))
             para.alignment = PP_ALIGN.LEFT
-            para.level = coerce_indent_level(item.get("indentation_level", 1))
+            para.level = max(0, min(bullet.level, MAX_INDENT_LEVEL) - 1)
 
             # Apply inline markdown formatting when markers OR escapes are present
-            if needs_inline_processing(item_text):
-                apply_inline_formatting(para, item_text, font_size=font_size)
+            if needs_inline_processing(bullet.text):
+                apply_inline_formatting(para, bullet.text, font_size=font_size)
             else:
-                para.text = item_text
+                para.text = bullet.text
                 if font_size:
                     para.font.size = font_size
+
+        return bullets
 
     # -------------------------------------------------------------------------
     # Table Helpers
     # -------------------------------------------------------------------------
 
-    def _set_cell_fill(self, cell, color: RGBColor) -> None:
+    def _set_cell_fill(self, cell, color) -> None:
         """Set the background fill color of a table cell.
 
         Args:
             cell: Table cell object.
-            color: RGBColor for the fill.
+            color: An ``RGBColor``, or a theme colour name such as "accent1".
+                A theme name is written as ``schemeClr`` so the fill follows
+                the template's palette instead of being pinned to a literal.
         """
         try:
             tc = cell._tc
@@ -355,13 +531,13 @@ class SlideHelpers:
                 if child.tag.endswith('}solidFill'):
                     tcPr.remove(child)
 
-            # Add new fill
-            solidFill = parse_xml(
-                f'<a:solidFill xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
-                f'<a:srgbClr val="{color}"/>'
-                f'</a:solidFill>'
-            )
-            tcPr.append(solidFill)
+            ns = 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"'
+            if isinstance(color, str):
+                inner = f'<a:schemeClr val="{color}"/>'
+            else:
+                inner = f'<a:srgbClr val="{color}"/>'
+
+            tcPr.append(parse_xml(f'<a:solidFill {ns}>{inner}</a:solidFill>'))
         except Exception as e:
             logger.debug(f"Could not set cell fill color: {e}")
 
@@ -373,9 +549,10 @@ class SlideHelpers:
         top: int,
         width: int,
         height: int,
-        header_color: Optional[RGBColor] = None,
+        header_color=None,
         alternate_rows: bool = True,
-        column_alignments: Optional[List] = None
+        column_alignments: Optional[List] = None,
+        font_size: Optional[int] = None,
     ):
         """Create a styled table on a slide.
 
@@ -383,24 +560,28 @@ class SlideHelpers:
             slide: PowerPoint slide object.
             table_data: List of rows (first row is header).
             left, top, width, height: Position and size.
-            header_color: Header background color.
+            header_color: Header background colour (RGBColor or theme name).
             alternate_rows: Whether to use alternating row colors.
             column_alignments: Optional list of PP_ALIGN values per column
                 (extracted from markdown separator row).
+            font_size: Explicit cell font size in points. When omitted, the
+                size is chosen from the row count so a tall table still fits
+                the content area instead of running off the slide.
 
         Returns:
-            Created table shape.
+            Tuple of (table shape, chosen font size in points or None).
         """
         num_rows = len(table_data)
         num_cols = max((len(row) for row in table_data), default=0)
 
         if num_rows == 0 or num_cols == 0:
-            return None
+            return None, None
 
         shape = slide.shapes.add_table(num_rows, num_cols, left, top, width, height)
         table = shape.table
 
-        header_color = header_color or TABLE_HEADER_FILL
+        header_color = header_color if header_color is not None else TABLE_HEADER_FILL
+        points = font_size or fit_table_font_size(num_rows, height)
 
         for row_idx, row_data in enumerate(table_data):
             for col_idx, cell_text in enumerate(row_data):
@@ -411,56 +592,62 @@ class SlideHelpers:
                 # cell_to_text, not a falsy test: `if cell_text` blanked a numeric 0.
                 cell.text = cell_to_text(cell_text)
 
+                paragraph = cell.text_frame.paragraphs[0]
+
                 # Apply column alignment
                 if column_alignments and col_idx < len(column_alignments):
                     alignment = column_alignments[col_idx]
                     if alignment is not None:
-                        cell.text_frame.paragraphs[0].alignment = alignment
+                        paragraph.alignment = alignment
+
+                if points:
+                    paragraph.font.size = Pt(points)
 
                 if row_idx == 0:  # Header row
-                    cell.text_frame.paragraphs[0].font.bold = True
-                    cell.text_frame.paragraphs[0].font.color.rgb = TABLE_HEADER_TEXT
+                    paragraph.font.bold = True
+                    paragraph.font.color.rgb = TABLE_HEADER_TEXT
                     self._set_cell_fill(cell, header_color)
                 elif alternate_rows and row_idx % 2 == 0:
                     self._set_cell_fill(cell, TABLE_ALT_ROW_FILL)
 
-        return shape
+        return shape, points
 
     # -------------------------------------------------------------------------
     # Image Helpers
     # -------------------------------------------------------------------------
 
-    def _add_image_from_url(
+    def _add_image(
         self,
         slide,
-        image_url: str,
+        source: str,
         left: int,
         top: int,
         max_width: int,
         max_height: int,
         center_horizontal: bool = True,
         center_vertical: bool = False
-    ) -> Optional[Any]:
-        """Download and add an image from URL to a slide.
+    ) -> Tuple[Optional[Any], Optional[str]]:
+        """Add an image from an https URL or an inline data URI.
 
         Args:
             slide: PowerPoint slide object.
-            image_url: URL of the image.
-            left: Left position.
-            top: Top position.
-            max_width: Maximum width.
-            max_height: Maximum height.
+            source: Image URL, or a ``data:image/...;base64,...`` URI.
+            left, top: Position.
+            max_width, max_height: Bounding box the image is scaled into.
             center_horizontal: Whether to center horizontally.
             center_vertical: Whether to center vertically.
 
         Returns:
-            Picture shape or None if failed.
+            ``(picture, None)`` on success, or ``(None, reason)`` — the reason
+            is surfaced to the caller rather than only logged, because an image
+            that quietly failed to load used to produce a confident success
+            response with a placeholder box on the slide.
         """
-        if not image_url:
-            return None
+        if not source:
+            return None, "no image source given"
 
         try:
-            image_data, _ = download_image(image_url)
+            image_data, _ = load_image(source)
 
             picture = slide.shapes.add_picture(
                 image_data, left, top, width=max_width
@@ -480,15 +667,26 @@ class SlideHelpers:
             if center_vertical:
                 picture.top = int(top + (max_height - picture.height) / 2)
 
-            logger.debug(f"Added image from URL: {image_url}")
-            return picture
+            logger.debug("Added image from %s", source[:80])
+            return picture, None
 
         except (ImageDownloadError, ImageValidationError) as e:
-            logger.error(f"Failed to download image: {e}")
-            return None
+            logger.error("Failed to load image: %s", e)
+            return None, str(e)
         except Exception as e:
-            logger.error(f"Failed to add image from URL '{image_url}': {e}", exc_info=True)
-            return None
+            logger.error("Failed to add image from %r: %s", source[:80], e, exc_info=True)
+            return None, str(e)
+
+    def _add_image_from_url(self, slide, image_url: str, left: int, top: int,
+                            max_width: int, max_height: int,
+                            center_horizontal: bool = True,
+                            center_vertical: bool = False) -> Optional[Any]:
+        """Backwards-compatible wrapper returning only the picture."""
+        picture, _ = self._add_image(
+            slide, image_url, left, top, max_width, max_height,
+            center_horizontal, center_vertical,
+        )
+        return picture
 
     def _add_image_placeholder(self, slide, message: str, left: int, top: int, width: int):
         """Add a placeholder text when image cannot be loaded.

@@ -52,6 +52,7 @@ main.py                  ← Registers all MCP tools on a single FastMCP instanc
 
 1. Create `<type>_tools/` package with `__init__.py`, `base_<type>_tool.py`, and optional `helpers.py`.
 2. The base tool function should: accept content → produce an `io.BytesIO` → call `upload_file(buffer, "<ext>")` → return the result string.
+   - **Exception, deliberate:** `pptx_tools._create_presentation_buffer` returns `(BytesIO, warnings)`. The PowerPoint builder collects everything it had to work around (an image that would not load, body text shrunk to fit, a footer dropped because the layout has no placeholder) on `PowerpointPresentation.warnings`, and `main.py` returns those alongside the file so the model can correct its next call. Anything else that grows a warnings channel should follow the same shape.
 3. Register the async wrapper in `main.py` using `@mcp.tool(name=..., description=..., tags=..., annotations=...)`.
 4. Use `Annotated[<type>, Field(description=...)]` for all tool parameters — the descriptions are critical because MCP clients (AI models) rely on them.
 

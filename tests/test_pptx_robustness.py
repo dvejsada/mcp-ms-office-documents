@@ -140,7 +140,7 @@ class TestUnknownSlideType:
         assert len(reload_presentation(pres).slides) == len(slides)
 
     def test_non_dict_slide_raises(self):
-        with pytest.raises(ValueError, match="must be an object"):
+        with pytest.raises(ValueError, match="valid dictionary or object"):
             build(["just a string"])
 
 
@@ -306,14 +306,15 @@ class TestIndentationLevel:
 
 class TestChartTypes:
 
-    def test_scatter_is_rejected_with_advice(self):
+    def test_scatter_as_a_category_chart_type_points_at_the_slide_type(self):
+        """Scatter is a slide type now, so asking for it here names the fix."""
         with pytest.raises(ChartDataError) as excinfo:
             validate_chart_data(
                 {"categories": ["a"], "series": [{"name": "s", "values": [1]}]}, "scatter"
             )
         message = str(excinfo.value)
-        assert "not supported" in message
-        assert "line_markers" in message
+        assert "own slide type" in message
+        assert '"type": "scatter"' in message
 
     def test_scatter_is_not_advertised(self):
         assert "scatter" not in CHART_TYPE_MAP

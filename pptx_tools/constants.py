@@ -56,6 +56,30 @@ MAX_INDENT_LEVEL = 5
 
 
 # =============================================================================
+# Autofit / overflow estimation
+# =============================================================================
+# Text is measured by estimate, not by a font engine: python-pptx cannot lay
+# text out, and shipping a font metrics dependency for a warning is not worth
+# it. The numbers below are deliberately rough and only drive (a) a shrink
+# factor written into <a:normAutofit>, which PowerPoint recomputes exactly when
+# the deck is opened, and (b) a warning returned to the caller.
+
+# Mean glyph advance as a fraction of the font size, for a mixed-case latin
+# sentence in the template's body face.
+AVG_CHAR_WIDTH_RATIO = 0.5
+# Baseline-to-baseline distance as a multiple of the font size.
+LINE_HEIGHT_RATIO = 1.22
+# Never shrink text below this fraction of its nominal size; past here the
+# slide is genuinely overfull and the caller should split it.
+MIN_AUTOFIT_SCALE = 0.6
+
+# Tables get shrunk by row count rather than by text metrics.
+TABLE_MIN_FONT_SIZE = 9
+# Rough row height (in points) per point of font size, including cell padding.
+TABLE_ROW_HEIGHT_PER_POINT = 2.1
+
+
+# =============================================================================
 # Table Colors
 # =============================================================================
 

@@ -7,8 +7,9 @@ using python-pptx's chart capabilities.
 import logging
 from typing import Dict, Any, Optional
 
-from pptx.chart.data import CategoryChartData
-from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
+from pptx.chart.data import CategoryChartData, XyChartData
+from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION, XL_LABEL_POSITION
+from pptx.util import Pt
 
 logger = logging.getLogger(__name__)
 
@@ -35,14 +36,22 @@ CHART_TYPE_MAP = {
     'radar': XL_CHART_TYPE.RADAR,
 }
 
-# Chart types that are recognised but not supported, mapped to the advice shown
-# to the caller. Without this, 'scatter' would report only "Unknown chart type".
+# Scatter is an XY chart: it needs XyChartData and (x, y) pairs rather than
+# categories, so it is built by add_scatter_to_slide() and deliberately absent
+# from CHART_TYPE_MAP. Asking for it as a category chart_type is still a
+# mistake worth naming precisely.
 UNSUPPORTED_CHART_TYPES = {
     'scatter': (
-        "Scatter (XY) charts are not supported yet because they need (x, y) point "
-        "pairs rather than categories and series. Use 'line_markers' for a trend "
-        "over ordered categories."
+        "Scatter is its own slide type, not a category chart_type: use "
+        "{\"type\": \"scatter\", \"series\": [{\"name\": ..., \"points\": [[x, y], ...]}]}."
     ),
+}
+
+LEGEND_POSITIONS = {
+    'left': XL_LEGEND_POSITION.LEFT,
+    'right': XL_LEGEND_POSITION.RIGHT,
+    'top': XL_LEGEND_POSITION.TOP,
+    'bottom': XL_LEGEND_POSITION.BOTTOM,
 }
 
 
@@ -158,27 +167,131 @@ def add_chart_to_slide(
 
     chart = chart_shape.chart
 
-    # Configure legend
-    if has_legend:
-        chart.has_legend = True
-        legend_positions = {
-            'left': XL_LEGEND_POSITION.LEFT,
-            'right': XL_LEGEND_POSITION.RIGHT,
-            'top': XL_LEGEND_POSITION.TOP,
-            'bottom': XL_LEGEND_POSITION.BOTTOM,
-        }
-        chart.legend.position = legend_positions.get(legend_position, XL_LEGEND_POSITION.RIGHT)
-        chart.legend.include_in_layout = False
-    else:
-        chart.has_legend = False
+    _configure_legend(chart, has_legend, legend_position)
+    _configure_title(chart, title)
 
-    # Set chart title if provided
+    logger.debug(f"Chart added successfully with {len(chart_data['series'])} series")
+    return chart
+
+
+# ---------------------------------------------------------------------------
+# Shared chart configuration
+# ---------------------------------------------------------------------------
+
+def _configure_legend(chart, has_legend: bool, legend_position: str) -> None:
+    """Show or hide the legend and place it."""
+    if not has_legend or legend_position == 'none':
+        chart.has_legend = False
+        return
+    chart.has_legend = True
+    chart.legend.position = LEGEND_POSITIONS.get(legend_position, XL_LEGEND_POSITION.RIGHT)
+    chart.legend.include_in_layout = False
+
+
+def _configure_title(chart, title: Optional[str]) -> None:
+    """Set or clear the chart's own title."""
     if title:
         chart.has_title = True
         chart.chart_title.text_frame.paragraphs[0].text = title
     else:
         chart.has_title = False
 
-    logger.debug(f"Chart added successfully with {len(chart_data['series'])} series")
+
+def configure_data_labels(chart, enabled: bool, number_format: Optional[str] = None) -> None:
+    """Turn value labels on each point on or off.
+
+    A number format without labels is still applied to the value axis, so
+    "#,##0" or "0.0%" formats the tick labels even when the caller did not ask
+    for per-point labels.
+    """
+    plot = chart.plots[0]
+    plot.has_data_labels = bool(enabled)
+    if enabled:
+        labels = plot.data_labels
+        labels.font.size = Pt(10)
+        if number_format:
+            labels.number_format = number_format
+            labels.number_format_is_linked = False
+        try:
+            labels.position = XL_LABEL_POSITION.OUTSIDE_END
+        except (ValueError, NotImplementedError):
+            # Not valid for every chart type (pie/doughnut/stacked); the
+            # default position is fine there.
+            pass
+    elif number_format:
+        try:
+            chart.value_axis.tick_labels.number_format = number_format
+            chart.value_axis.tick_labels.number_format_is_linked = False
+        except (ValueError, NotImplementedError):
+            pass
+
+
+def set_axis_titles(chart, x_title: Optional[str] = None, y_title: Optional[str] = None) -> None:
+    """Label the category and value axes, where the chart type has them.
+
+    Pie and doughnut charts have no axes; asking for a title there is a no-op
+    rather than an error, because it is a reasonable thing for a caller to send
+    without knowing the chart type's geometry.
+    """
+    for axis_name, title in (("category_axis", x_title), ("value_axis", y_title)):
+        if not title:
+            continue
+        try:
+            axis = getattr(chart, axis_name)
+            axis.has_title = True
+            axis.axis_title.text_frame.paragraphs[0].text = title
+        except (ValueError, NotImplementedError, AttributeError):
+            logger.debug("Chart type has no %s; skipping its title", axis_name)
+
+
+def add_scatter_to_slide(
+    slide,
+    series: list,
+    left: int,
+    top: int,
+    width: int,
+    height: int,
+    legend: str = 'right',
+    title: Optional[str] = None,
+    x_title: Optional[str] = None,
+    y_title: Optional[str] = None,
+):
+    """Add an XY (scatter) chart built from [x, y] point pairs.
+
+    Separate from :func:`add_chart_to_slide` because an XY chart needs
+    ``XyChartData``: feeding categories and series to it raises
+    ``'CategoryWorkbookWriter' object has no attribute 'x_values_ref'``, which
+    is why the previously advertised 'scatter' chart_type could never build.
+
+    Args:
+        series: Objects with ``name`` and ``points`` ([[x, y], ...]).
+    """
+    if not series:
+        raise ChartDataError("Scatter chart needs at least one series")
+
+    data = XyChartData()
+    for entry in series:
+        name = getattr(entry, "name", None) or (entry.get("name") if isinstance(entry, dict) else None)
+        points = getattr(entry, "points", None)
+        if points is None and isinstance(entry, dict):
+            points = entry.get("points")
+        if not points:
+            raise ChartDataError(f"Scatter series {name!r} has no points")
+
+        series_data = data.add_series(name)
+        for x, y in points:
+            series_data.add_data_point(float(x), float(y))
+
+    chart_shape = slide.shapes.add_chart(
+        XL_CHART_TYPE.XY_SCATTER, left, top, width, height, data
+    )
+    chart = chart_shape.chart
+
+    _configure_legend(chart, legend != 'none', legend)
+    _configure_title(chart, title)
+    set_axis_titles(chart, x_title, y_title)
+
+    logger.debug("Scatter chart added with %d series", len(series))
+    return chart
 
 

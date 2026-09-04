@@ -8,9 +8,12 @@ Downloads are restricted to publicly routable addresses (see
 used to reach loopback, private-network or cloud-metadata services.
 """
 
+import base64
+import binascii
 import io
 import ipaddress
 import logging
+import re
 import socket
 import time
 from typing import Tuple
@@ -258,6 +261,79 @@ def download_image(url: str) -> Tuple[io.BytesIO, str]:
     logger.info(f"Successfully downloaded image: {total_size / 1024:.1f}KB, type: {extension}")
 
     return image_data, extension
+
+
+_DATA_URI_RE = re.compile(
+    r'^data:(?P<mime>[\w.+-]+/[\w.+-]+)?(?P<params>(?:;[^;,]+)*),(?P<data>.*)$',
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def is_data_uri(source: str) -> bool:
+    """True when *source* is an inline ``data:`` URI rather than a URL."""
+    return isinstance(source, str) and source[:5].lower() == "data:"
+
+
+def decode_data_uri(source: str) -> Tuple[io.BytesIO, str]:
+    """Decode an inline ``data:image/...;base64,...`` URI.
+
+    Lets a caller place an image it already holds — one a user pasted into the
+    conversation, or a chart it rendered itself — without first publishing it
+    to a URL the server can reach. Nothing leaves the process, so the SSRF
+    checks that guard :func:`download_image` do not apply; the size limit
+    still does.
+
+    Raises:
+        ImageValidationError: If the URI is malformed, is not an allowed image
+            type, or decodes to more than MAX_IMAGE_SIZE bytes.
+    """
+    match = _DATA_URI_RE.match(source)
+    if not match:
+        raise ImageValidationError(
+            "Malformed data URI: expected data:image/png;base64,<base64 data>"
+        )
+
+    mime = (match.group("mime") or "text/plain").lower()
+    params = (match.group("params") or "").lower()
+    payload = match.group("data")
+
+    if mime not in ALLOWED_MIME_TYPES:
+        raise ImageValidationError(
+            f"Invalid image type: {mime}. Allowed types: {', '.join(sorted(ALLOWED_MIME_TYPES))}"
+        )
+
+    if ";base64" not in params:
+        raise ImageValidationError("Only base64-encoded data URIs are supported")
+
+    # Guard before decoding: base64 expands to about 3/4 its length, so a
+    # payload far past the limit is rejected without allocating it.
+    if len(payload) * 3 // 4 > MAX_IMAGE_SIZE:
+        raise ImageValidationError(
+            f"Image too large. Maximum size: {MAX_IMAGE_SIZE / (1024 * 1024):.0f}MB"
+        )
+
+    try:
+        raw = base64.b64decode(payload, validate=True)
+    except (binascii.Error, ValueError) as e:
+        raise ImageValidationError(f"Could not decode base64 image data: {e}")
+
+    if len(raw) > MAX_IMAGE_SIZE:
+        raise ImageValidationError(
+            f"Image too large: {len(raw) / (1024 * 1024):.1f}MB. "
+            f"Maximum size: {MAX_IMAGE_SIZE / (1024 * 1024):.0f}MB"
+        )
+    if not raw:
+        raise ImageValidationError("Data URI contains no image data")
+
+    logger.info("Decoded inline %s image: %.1fKB", mime, len(raw) / 1024)
+    return io.BytesIO(raw), get_image_extension(mime, "")
+
+
+def load_image(source: str) -> Tuple[io.BytesIO, str]:
+    """Load an image from an https URL or an inline ``data:`` URI."""
+    if is_data_uri(source):
+        return decode_data_uri(source)
+    return download_image(source)
 
 
 def get_image_extension(content_type: str, url: str) -> str:
