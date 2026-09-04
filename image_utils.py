@@ -1,7 +1,9 @@
-"""Utility functions for handling images in PowerPoint presentations.
+"""Fetching and validating images for the Office document tools.
 
-This module provides functionality to download and validate images from URLs
-for embedding in PowerPoint slides.
+Shared by the PowerPoint and Word renderers, which both embed images from an
+https URL or a ``data:`` URI. It lived under ``pptx_tools`` while only the
+presentation tool used it, and ``docx_tools`` imported it across packages —
+a dependency in the wrong direction that this module's location now avoids.
 
 Downloads are restricted to publicly routable addresses (see
 :func:`assert_url_is_public`) so that a caller-supplied image URL cannot be

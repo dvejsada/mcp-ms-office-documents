@@ -334,7 +334,7 @@ def add_image_to_doc(doc, url, alt_text, max_width_inches=None):
     placeholder paragraph instead.
     """
     try:
-        from pptx_tools.image_utils import download_image
+        from image_utils import download_image
         if max_width_inches is None:
             try:
                 sec = doc.sections[-1]

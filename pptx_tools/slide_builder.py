@@ -12,8 +12,9 @@ deck was fine and had no way to correct itself.
 
 import io
 import copy
+import re
 import logging
-from typing import Any, List, Optional, Sequence
+from typing import Any, List, Optional, Sequence, Tuple
 
 from pptx import Presentation
 from pptx.dml.color import MSO_THEME_COLOR
@@ -108,6 +109,7 @@ class PowerpointPresentation(SlideHelpers):
 
         self._remove_template_slides()
         self._build_slides(self.slides)
+        self._apply_sections()
         if self._footer_text or self._show_slide_numbers:
             self._apply_footer_and_slide_numbers()
         if self._language:
@@ -309,6 +311,78 @@ class PowerpointPresentation(SlideHelpers):
         if removed:
             logger.debug("Removed %d slide(s) carried by the template", removed)
 
+    # PowerPoint's outline-pane sections live in a p14 extension on
+    # <p:presentation>. python-pptx has no API for them, so the XML is written
+    # directly, mirroring how the shipped template declares its own p15
+    # extension: the namespace on the extension element itself.
+    _SECTION_LIST_EXT_URI = "{521415D9-36F7-43E2-AB2F-B90AF26B5E84}"
+    _P14_NS = "http://schemas.microsoft.com/office/powerpoint/2010/main"
+    _DEFAULT_SECTION_NAME = "Default Section"
+
+    def _apply_sections(self) -> None:
+        """Group slides under each ``section`` slide in the outline pane.
+
+        A ``section`` slide already divides the deck for the audience; this
+        makes the same division visible to the presenter, so the slide sorter
+        and outline pane show the deck's structure instead of a flat list.
+        Slides before the first section slide — the title slide, an agenda —
+        go in a section named the way PowerPoint names its own.
+
+        Every slide must belong to a section once a section list exists, or
+        PowerPoint reports the file as needing repair, so the grouping is
+        computed over the actual slide-id list rather than the models: with
+        ``strip_slides: false`` the template's own slides come first, and they
+        are folded into the leading section.
+        """
+        from uuid import uuid4
+        from xml.sax.saxutils import escape
+
+        section_at = [i for i, slide in enumerate(self.slides) if slide.type == "section"]
+        if not section_at:
+            return
+
+        slide_ids = [int(entry.id) for entry in self.presentation.slides._sldIdLst]
+        offset = len(slide_ids) - len(self.slides)
+        if offset < 0:
+            # Fewer slides than models can only mean a build error upstream;
+            # a wrong grouping is worse than none.
+            logger.warning("[pptx] slide count is below the model count; sections skipped")
+            return
+
+        groups: List[Tuple[str, List[int]]] = []
+        leading = slide_ids[: offset + section_at[0]]
+        if leading:
+            groups.append((self._DEFAULT_SECTION_NAME, leading))
+        bounds = section_at + [len(self.slides)]
+        for number, (start, end) in enumerate(zip(bounds, bounds[1:]), start=1):
+            title = (self.slides[start].title or "").strip() or f"Section {number}"
+            groups.append((title, slide_ids[offset + start: offset + end]))
+
+        root = self.presentation._element
+        ext_lst = root.find(qn("p:extLst"))
+        if ext_lst is None:
+            ext_lst = parse_xml(f'<p:extLst xmlns:p="{root.nsmap["p"]}"/>')
+            root.append(ext_lst)
+        # A template may carry a section list of its own; ours replaces it,
+        # since the slides it referred to are gone.
+        for ext in ext_lst.findall(qn("p:ext")):
+            if ext.get("uri") == self._SECTION_LIST_EXT_URI:
+                ext_lst.remove(ext)
+
+        sections_xml = "".join(
+            f'<p14:section name="{escape(name, {chr(34): "&quot;"})}" '
+            f'id="{{{str(uuid4()).upper()}}}"><p14:sldIdLst>'
+            + "".join(f'<p14:sldId id="{sid}"/>' for sid in ids)
+            + "</p14:sldIdLst></p14:section>"
+            for name, ids in groups
+        )
+        ext_lst.append(parse_xml(
+            f'<p:ext xmlns:p="{root.nsmap["p"]}" uri="{self._SECTION_LIST_EXT_URI}">'
+            f'<p14:sectionLst xmlns:p14="{self._P14_NS}">{sections_xml}</p14:sectionLst>'
+            "</p:ext>"
+        ))
+        logger.debug("Wrote %d outline section(s)", len(groups))
+
     def _build_slides(self, slides: Sequence[Any]) -> None:
         """Build all slides from validated models."""
         builders = {
@@ -325,6 +399,7 @@ class PowerpointPresentation(SlideHelpers):
             "agenda": self._build_agenda_slide,
             "closing": self._build_closing_slide,
             "timeline": self._build_timeline_slide,
+            "blank": self._build_blank_slide,
         }
 
         logger.info("Building %d slides", len(slides))
@@ -770,6 +845,124 @@ class PowerpointPresentation(SlideHelpers):
                     "this layout has no subtitle or body placeholder; the closing "
                     "lines were dropped.",
                 )
+
+        self._add_speaker_notes(slide, slide_data.notes)
+
+    # -------------------------------------------------------------------------
+    # Blank slide with positioned elements
+    # -------------------------------------------------------------------------
+
+    _ELEMENT_SHAPES = {
+        "rectangle": MSO_SHAPE.RECTANGLE,
+        "rounded_rectangle": MSO_SHAPE.ROUNDED_RECTANGLE,
+        "ellipse": MSO_SHAPE.OVAL,
+        "chevron": MSO_SHAPE.CHEVRON,
+        "arrow": MSO_SHAPE.RIGHT_ARROW,
+    }
+    _ELEMENT_ALIGN = {"left": PP_ALIGN.LEFT, "center": PP_ALIGN.CENTER, "right": PP_ALIGN.RIGHT}
+
+    @staticmethod
+    def _resolve_length(value, extent: int) -> int:
+        """A schema position — inches, "1.5in" or "40%" — as EMU along *extent*."""
+        if isinstance(value, (int, float)):
+            return int(Inches(value))
+        text = str(value).strip()
+        if text.endswith("%"):
+            return int(extent * float(text[:-1]) / 100.0)
+        if text.endswith("in"):
+            text = text[:-2]
+        return int(Inches(float(text)))
+
+    @staticmethod
+    def _fill_shape(shape, fill) -> None:
+        """Apply a resolved fill: an ``RGBColor``, or a theme colour name."""
+        shape.fill.solid()
+        if isinstance(fill, str):
+            # "accent1" -> ACCENT_1, "dark2" -> DARK_2: the enum spells the
+            # digit with an underscore.
+            member = re.sub(r"(\d)$", r"_\1", fill.upper())
+            shape.fill.fore_color.theme_color = getattr(MSO_THEME_COLOR, member)
+        else:
+            shape.fill.fore_color.rgb = fill
+
+    def _build_blank_slide(self, slide_data, index: int) -> None:
+        """Draw positioned elements on an empty layout.
+
+        The escape hatch: every other slide type decides where things go, this
+        one is told. Positions are resolved against the real slide size, so a
+        percentage means the same thing on a 4:3 and a 16:9 template. An
+        element that would run past the slide edge is shrunk to fit and
+        reported; one that starts off the slide is skipped and reported.
+        Silently drawing off-slide content is the failure the warnings channel
+        exists to prevent.
+        """
+        slide = self._new_slide(slide_data, index)
+        self._apply_title(slide, slide_data.title, index)
+        slide_w = self.presentation.slide_width
+        slide_h = self.presentation.slide_height
+
+        for number, element in enumerate(slide_data.elements, start=1):
+            left = self._resolve_length(element.x, slide_w)
+            top = self._resolve_length(element.y, slide_h)
+            width = self._resolve_length(element.w, slide_w)
+            if element.h is not None:
+                height = self._resolve_length(element.h, slide_h)
+            elif element.kind == "text":
+                height = int(Inches(1))
+            elif element.kind == "shape":
+                height = width
+            else:
+                height = slide_h - top
+
+            if left >= slide_w or top >= slide_h:
+                self._warn(index, f"element {number} ({element.kind}) starts off the slide; skipped.")
+                continue
+            reduced = []
+            if left + width > slide_w:
+                width, reduced = slide_w - left, reduced + ["width"]
+            if top + height > slide_h:
+                height, reduced = slide_h - top, reduced + ["height"]
+            if reduced:
+                self._warn(
+                    index,
+                    f"element {number} ({element.kind}) ran past the slide edge; "
+                    f"{' and '.join(reduced)} reduced to fit.",
+                )
+
+            if element.kind == "text":
+                box = slide.shapes.add_textbox(left, top, width, height)
+                box.text_frame.word_wrap = True
+                apply_inline_formatting(
+                    box.text_frame, element.text,
+                    font_size=Pt(element.font_size) if element.font_size else None,
+                    bold=element.bold,
+                    alignment=self._ELEMENT_ALIGN[element.align],
+                )
+            elif element.kind == "image":
+                picture, error = self._add_image(
+                    slide, element.source,
+                    left=left, top=top, max_width=width, max_height=height,
+                    center_horizontal=False,
+                )
+                if not picture:
+                    self._add_image_placeholder(slide, "Image could not be loaded", left, top, width)
+                    self._warn(
+                        index,
+                        f"element {number} image could not be loaded ({error}); "
+                        "a placeholder was drawn.",
+                    )
+            else:
+                shape = slide.shapes.add_shape(
+                    self._ELEMENT_SHAPES[element.shape], left, top, width, height
+                )
+                fill = resolve_fill(element.fill, None)
+                if fill is not None:
+                    self._fill_shape(shape, fill)
+                if element.text:
+                    shape.text_frame.word_wrap = True
+                    apply_inline_formatting(
+                        shape.text_frame, element.text, alignment=PP_ALIGN.CENTER
+                    )
 
         self._add_speaker_notes(slide, slide_data.notes)
 

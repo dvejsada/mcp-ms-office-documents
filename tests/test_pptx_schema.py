@@ -20,7 +20,7 @@ from pptx.oxml.ns import qn
 from pptx.util import Emu
 
 from pptx_tools.helpers import body_to_bullets, estimate_text_fill, fit_table_font_size
-from pptx_tools.image_utils import ImageValidationError, decode_data_uri, is_data_uri
+from image_utils import ImageValidationError, decode_data_uri, is_data_uri
 from pptx_tools.chart_utils import ChartDataError
 from pptx_tools.schema import (
     Bullet, ContentSlide, SLIDE_TYPES, _SLIDES_ADAPTER, coerce_slides,
@@ -71,7 +71,7 @@ class TestSchemaShape:
         assert set(SLIDE_TYPES) == {
             "title", "section", "content", "table",
             "chart", "scatter", "image", "two_column", "quote",
-            "kpi", "agenda", "closing", "timeline",
+            "kpi", "agenda", "closing", "timeline", "blank",
         }
 
     def test_unknown_type_names_the_valid_ones(self):

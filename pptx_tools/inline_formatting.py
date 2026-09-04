@@ -1,65 +1,31 @@
 """Inline markdown formatting for PowerPoint text runs.
 
-Supports: **bold**, *italic*, ***bold italic***, ~~strikethrough~~,
-__underline__, `code` (Courier New font). Handles nested formatting
-and backslash escapes.
+Renders **bold**, *italic*, ***bold italic***, ~~strikethrough~~,
+__underline__, `code`, ^superscript^, ~subscript~ and [links](url) into
+python-pptx runs, with nesting and backslash escapes. The grammar itself is
+:mod:`inline_markdown`, shared with the Word renderer; this module is the
+PowerPoint-specific rendering of its tokens.
 
-The API mirrors the approach used in docx_tools/inline_formatting.py but
-targets python-pptx paragraph/run objects instead of python-docx ones.
+Note on dunders: "__init__" is emphasis under standard markdown too (both
+markers are flanked), so it is matched here as well. Write it inside
+backticks — `__init__` — to render it verbatim; the code branch consumes the
+span before any emphasis branch sees it.
 """
 
-import re
 import logging
 from typing import Optional
 
+from inline_markdown import ESCAPE_RE, LINK_RE, build_inline_pattern
+
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Inline formatting regex (subset of docx_tools/patterns.py)
-# Covers the formats that render well in PowerPoint.
-#
-# Every marker is "flanked": the opening marker must be followed by a character
-# that is neither whitespace nor another marker character, and the closing
-# marker must be preceded by one. This mirrors CommonMark's left/right-flanking
-# delimiter rules and is what keeps prose such as "5 * 3 * 2 = 30" or
-# "10 ~ 20 ~ 30" from being read as emphasis. Without it, the italic branch
-# matched "* 3 *" and italicised the 3.
-#
-# Note on dunders: "__init__" is emphasis under standard markdown too (the
-# opening and closing markers are both flanked), so it is matched here as well.
-# Write it inside backticks — `__init__` — to render it verbatim; the code
-# branch consumes the span before any emphasis branch sees it.
-# ---------------------------------------------------------------------------
-
-_INLINE_FORMAT_RE = re.compile(
-    # ***bold italic***
-    r'(\*{3}(?=[^\s*])(?:[^*]|\*(?!\*{2}))+?(?<=[^\s*])\*{3}'
-    # **bold**
-    r'|\*\*(?=[^\s*])(?:[^*]|\*(?!\*))+?(?<=[^\s*])\*\*'
-    # ~~strikethrough~~
-    r'|~~(?=[^\s~]).+?(?<=[^\s~])~~'
-    # __underline__
-    r'|__(?=[^\s_]).+?(?<=[^\s_])__'
-    # *italic* (allows nested **bold**)
-    #
-    # The other branches close on a lookbehind, but this one cannot: a nested
-    # **bold** unit ends in '*', so a lookbehind would reject an italic span
-    # whose last element is bold with nothing between the two closers
-    # ("*always **backup your data***") and the outer italic would be dropped,
-    # leaving stray asterisks on the slide. Instead the right flank is stated
-    # structurally: whatever is consumed last must itself be a valid flank —
-    # a non-space non-star character, or a complete nested bold unit.
-    r'|\*(?=[^\s*])(?:[^*]|\*\*[^*]+\*\*)*?(?:[^\s*]|\*\*[^*]+\*\*)\*'
-    # `code`
-    r'|`[^`]+`'
-    # [link text](https://url) — no nesting inside the target, and the label
-    # is parsed for emphasis like any other segment.
-    r'|\[[^\]\n]+\]\([^)\s]+\))'
-)
-
-_LINK_RE = re.compile(r'^\[([^\]\n]+)\]\(([^)\s]+)\)$')
-
-_ESCAPE_RE = re.compile(r'\\(.)')  # backslash-escaped character
+# The grammar is shared with the Word renderer — see inline_markdown.py for
+# the rules and why there is one copy. PowerPoint cannot highlight, so that
+# span is left out and "==x==" stays literal; superscript and subscript are
+# drawn through the run's baseline offset.
+_INLINE_FORMAT_RE = build_inline_pattern(superscript=True, subscript=True)
+_LINK_RE = LINK_RE
+_ESCAPE_RE = ESCAPE_RE
 
 
 # ---------------------------------------------------------------------------
@@ -148,8 +114,15 @@ def _restore_escapes(text: str, escape_ctx: dict) -> str:
     return text
 
 
+# DrawingML expresses super/subscript as a baseline offset in thousandths of
+# a percent; these are the values PowerPoint itself writes.
+_SUPERSCRIPT_BASELINE = "30000"
+_SUBSCRIPT_BASELINE = "-25000"
+
+
 def _add_run(paragraph, text: str, font_size=None, bold=False, italic=False,
-             strike=False, underline=False, font_name=None, hyperlink=None):
+             strike=False, underline=False, font_name=None, hyperlink=None,
+             baseline=None):
     """Add a formatted run to a paragraph."""
     run = paragraph.add_run()
     run.text = text
@@ -172,6 +145,9 @@ def _add_run(paragraph, text: str, font_size=None, bold=False, italic=False,
         run.font.underline = True
     if font_name:
         run.font.name = font_name
+    if baseline:
+        # Nor super/subscript — same route.
+        run._r.get_or_add_rPr().set('baseline', baseline)
     return run
 
 
@@ -210,6 +186,18 @@ def _parse_segment(text: str, paragraph, font_size=None, bold=False, italic=Fals
             # Code (monospace)
             _add_run(paragraph, _restore_escapes(part[1:-1], escape_ctx),
                      font_size=font_size, bold=bold, italic=italic, font_name='Courier New')
+
+        elif part.startswith('^') and part.endswith('^') and len(part) > 2:
+            # Superscript
+            _add_run(paragraph, _restore_escapes(part[1:-1], escape_ctx),
+                     font_size=font_size, bold=bold, italic=italic,
+                     baseline=_SUPERSCRIPT_BASELINE)
+
+        elif part.startswith('~') and part.endswith('~') and not part.startswith('~~') and len(part) > 2:
+            # Subscript (single tilde; the strikethrough branch owns "~~")
+            _add_run(paragraph, _restore_escapes(part[1:-1], escape_ctx),
+                     font_size=font_size, bold=bold, italic=italic,
+                     baseline=_SUBSCRIPT_BASELINE)
 
         elif part.startswith('[') and _LINK_RE.match(part):
             # Hyperlink: render the label with its own formatting, then point

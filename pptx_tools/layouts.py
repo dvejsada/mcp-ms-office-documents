@@ -81,6 +81,8 @@ SLIDE_TYPE_ROLE = {
     "scatter": ROLE_CONTENT,
     "quote": ROLE_CONTENT,
     "image": ROLE_CONTENT,
+    # Positioned elements want nothing on the layout at all.
+    "blank": ROLE_BLANK,
 }
 
 # Placeholders every layout carries regardless of its purpose; they say nothing
