@@ -3,6 +3,7 @@ import logging
 from typing import List, Dict, Any, Optional
 
 from upload_tools import upload_file
+from .constants import DEFAULT_SLIDE_FORMAT
 from .slide_builder import PowerpointPresentation
 
 logger = logging.getLogger(__name__)
@@ -10,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 def _create_presentation_buffer(
     slides: List[Dict[str, Any]],
-    format: str = "4:3",
+    format: str = DEFAULT_SLIDE_FORMAT,
     author: Optional[str] = None,
     footer_text: Optional[str] = None,
     show_slide_numbers: bool = False,
@@ -21,7 +22,7 @@ def _create_presentation_buffer(
     such as for LibreChat file artifact uploads.
 
     :param slides: List of slide dicts with keys based on slide_type
-    :param format: "4:3" or "16:9"
+    :param format: "4:3" or "16:9" (defaults to the shared DEFAULT_SLIDE_FORMAT)
     :param author: Author name for document properties
     :param footer_text: Optional footer text displayed on all slides
     :param show_slide_numbers: Whether to show slide numbers
@@ -43,7 +44,7 @@ def _create_presentation_buffer(
 
 def create_presentation(
     slides: List[Dict[str, Any]],
-    format: str = "4:3",
+    format: str = DEFAULT_SLIDE_FORMAT,
     file_name: Optional[str] = None,
     author: Optional[str] = None,
     footer_text: Optional[str] = None,

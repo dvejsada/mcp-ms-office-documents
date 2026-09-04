@@ -15,13 +15,13 @@ from pptx.dml.color import RGBColor
 from pptx.oxml import parse_xml
 
 from .constants import (
-    BLANK_LAYOUT, CONTENT_LAYOUT,
+    CONTENT_LAYOUT,
     DEFAULT_BODY_FONT_SIZE,
-    MARGIN_LEFT,
+    MARGIN_LEFT, MAX_INDENT_LEVEL,
     TABLE_HEADER_FILL, TABLE_HEADER_TEXT, TABLE_ALT_ROW_FILL,
 )
 from .image_utils import download_image, ImageDownloadError, ImageValidationError
-from .inline_formatting import has_inline_formatting, apply_inline_formatting
+from .inline_formatting import needs_inline_processing, apply_inline_formatting
 
 logger = logging.getLogger(__name__)
 
@@ -34,10 +34,28 @@ logger = logging.getLogger(__name__)
 _SEPARATOR_CELL_RE = re.compile(r'^\s*:?-{3,}:?\s*$')
 
 
+def cell_to_text(value: Any) -> str:
+    """Render one raw table cell as text.
+
+    Table data arrives straight from the model, which sends numbers as numbers
+    and omissions as ``null``. Everything downstream (the separator regex, the
+    cell writer) needs a string, so normalise here rather than at each use.
+
+    ``None`` becomes an empty cell; every other value is stringified, so a
+    numeric ``0`` survives as "0" instead of being dropped by a falsy test.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    return str(value)
+
+
 def _is_separator_row(row: List[str]) -> bool:
     """Check if a row is a markdown table separator row (e.g., |:---|:---:|---:|).
 
     Uses strict per-cell regex to avoid false positives on content containing dashes.
+    Expects cells already normalised to text by :func:`cell_to_text`.
     """
     return bool(row) and all(_SEPARATOR_CELL_RE.match(cell) for cell in row)
 
@@ -63,11 +81,15 @@ def _extract_alignments(row: List[str]) -> List[Optional[int]]:
     return alignments
 
 
-def parse_table_data(table_data: List[List[str]]) -> tuple:
+def parse_table_data(table_data: List[List[Any]]) -> tuple:
     """Clean table data by removing markdown separator rows and extracting alignments.
 
+    Cells are normalised to text first, so numeric and ``null`` cells are
+    accepted; previously they raised ``TypeError`` inside the separator regex
+    and failed the whole presentation.
+
     Args:
-        table_data: Raw table data as list of rows.
+        table_data: Raw table data as list of rows. Cells may be any scalar.
 
     Returns:
         Tuple of (cleaned_rows, column_alignments).
@@ -81,28 +103,63 @@ def parse_table_data(table_data: List[List[str]]) -> tuple:
     col_alignments = None
 
     for row in table_data:
-        if _is_separator_row(row):
-            col_alignments = _extract_alignments(row)
+        # A row sent as a bare scalar becomes a single-cell row rather than an error.
+        cells = [cell_to_text(c) for c in row] if isinstance(row, (list, tuple)) else [cell_to_text(row)]
+
+        if _is_separator_row(cells):
+            col_alignments = _extract_alignments(cells)
         else:
-            cleaned.append(row)
+            cleaned.append(cells)
 
     return cleaned, col_alignments
 
 
-def parse_color(color_hex: str, default: RGBColor) -> RGBColor:
-    """Parse hex color string to RGBColor.
+def parse_color(color_hex: Any, default: RGBColor) -> RGBColor:
+    """Parse a hex color string to RGBColor.
+
+    Accepts both "4172C4" and "#4172C4" — models routinely send the leading
+    hash, which ``RGBColor.from_string`` rejects. An unusable value falls back
+    to *default* and is logged at WARNING, because silently substituting a
+    colour is the kind of failure nobody notices until the deck is on screen.
 
     Args:
-        color_hex: Hex color string (e.g., "4172C4").
+        color_hex: Hex color string, with or without a leading '#'.
         default: Default color if parsing fails.
 
     Returns:
         RGBColor object.
     """
-    try:
-        return RGBColor.from_string(color_hex)
-    except (ValueError, AttributeError):
+    if color_hex is None:
         return default
+
+    try:
+        return RGBColor.from_string(str(color_hex).strip().lstrip('#').upper())
+    except (ValueError, AttributeError):
+        logger.warning(
+            "Unrecognised colour %r (expected 6-digit hex such as '4172C4' or '#4172C4'); using %s",
+            color_hex, default,
+        )
+        return default
+
+
+def coerce_indent_level(value: Any) -> int:
+    """Map a 1-based ``indentation_level`` onto a 0-based pptx paragraph level.
+
+    Tolerant by design: the value reaches us from a model, so a numeric string
+    ("2") is accepted, a level past the supported depth is clamped instead of
+    producing an invalid paragraph, and an unparseable value falls back to the
+    top level with a warning rather than failing the presentation.
+    """
+    if value is None:
+        return 0
+
+    try:
+        level = int(value)
+    except (TypeError, ValueError):
+        logger.warning("Invalid indentation_level %r; using 1", value)
+        level = 1
+
+    return max(1, min(level, MAX_INDENT_LEVEL)) - 1
 
 
 # =============================================================================
@@ -126,11 +183,6 @@ class SlideHelpers:
     def _get_slide_dimensions(self) -> Tuple[int, int]:
         """Get slide width and height."""
         return self.presentation.slide_width, self.presentation.slide_height
-
-    def _add_blank_slide(self):
-        """Add a blank slide and return it."""
-        layout = self.presentation.slide_layouts[BLANK_LAYOUT]
-        return self.presentation.slides.add_slide(layout)
 
     def _add_title_content_slide(self, title: str = ""):
         """Add a Title and Content slide and return slide with content placeholder info.
@@ -249,6 +301,9 @@ class SlideHelpers:
         **bold**, *italic*, ***bold italic***, ~~strikethrough~~,
         __underline__, `code`.
 
+        A bullet may also be given as a bare string, which is treated as
+        ``{"text": <string>}`` at the top level.
+
         Args:
             text_frame: PowerPoint text frame object (from placeholder or textbox).
             items: List of dicts with 'text' and 'indentation_level' keys.
@@ -260,50 +315,25 @@ class SlideHelpers:
         text_frame.word_wrap = True
 
         for i, item in enumerate(items):
+            if not isinstance(item, dict):
+                item = {"text": cell_to_text(item)}
+
             if i == 0:
                 para = text_frame.paragraphs[0]
             else:
                 para = text_frame.add_paragraph()
 
-            item_text = item.get("text", "")
+            item_text = cell_to_text(item.get("text", ""))
             para.alignment = PP_ALIGN.LEFT
-            para.level = max(0, int(item.get("indentation_level", 1)) - 1)
+            para.level = coerce_indent_level(item.get("indentation_level", 1))
 
-            # Apply inline markdown formatting if markers are present
-            if has_inline_formatting(item_text):
+            # Apply inline markdown formatting when markers OR escapes are present
+            if needs_inline_processing(item_text):
                 apply_inline_formatting(para, item_text, font_size=font_size)
             else:
                 para.text = item_text
                 if font_size:
                     para.font.size = font_size
-
-    def _add_bullet_list(
-        self,
-        slide,
-        items: List[dict],
-        left: int,
-        top: int,
-        width: int,
-        height: int,
-        font_size: Optional[int] = None
-    ):
-        """Add a bullet list textbox to a slide.
-
-        Args:
-            slide: PowerPoint slide object.
-            items: List of dicts with 'text' and 'indentation_level' keys.
-            left, top, width, height: Position and size.
-            font_size: Font size for items.
-
-        Returns:
-            Created textbox shape or None if no items.
-        """
-        if not items:
-            return None
-
-        shape = slide.shapes.add_textbox(left, top, width, height)
-        self._fill_bullets(shape.text_frame, items, font_size)
-        return shape
 
     # -------------------------------------------------------------------------
     # Table Helpers
@@ -378,7 +408,8 @@ class SlideHelpers:
                     continue
 
                 cell = table.cell(row_idx, col_idx)
-                cell.text = str(cell_text) if cell_text else ""
+                # cell_to_text, not a falsy test: `if cell_text` blanked a numeric 0.
+                cell.text = cell_to_text(cell_text)
 
                 # Apply column alignment
                 if column_alignments and col_idx < len(column_alignments):
