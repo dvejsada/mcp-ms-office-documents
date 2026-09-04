@@ -341,6 +341,30 @@ class TestInlineAdditions:
         assert runs[0].font.bold
         assert runs[0].hyperlink.address == "https://b.co"
 
+    def test_link_inside_italics_keeps_both(self):
+        """Emphasis spans the whole phrase; the link attaches only to its label.
+
+        Flagged in review as reachable by recursion but untested: the italic
+        branch passes its inner text back through the parser, which then
+        matches the link.
+        """
+        pres = build([{"type": "content", "title": "L",
+                       "body": "- *see [this](https://example.com) here*"}])
+        runs = reload_presentation(pres).slides[0].placeholders[1].text_frame.paragraphs[0].runs
+
+        assert [r.text for r in runs] == ["see ", "this", " here"]
+        assert all(r.font.italic for r in runs)
+        assert [r.hyperlink.address for r in runs] == [None, "https://example.com", None]
+
+    def test_adjacent_links_do_not_bleed_into_each_other(self):
+        pres = build([{"type": "content", "title": "L",
+                       "body": "- [a](https://e.co/1)[b](https://e.co/2)"}])
+        runs = reload_presentation(pres).slides[0].placeholders[1].text_frame.paragraphs[0].runs
+
+        assert [(r.text, r.hyperlink.address) for r in runs] == [
+            ("a", "https://e.co/1"), ("b", "https://e.co/2"),
+        ]
+
     def test_bracket_text_that_is_not_a_link_is_left_alone(self):
         pres = build([{"type": "content", "title": "L", "body": "- see [x] (y) here"}])
         paragraph = reload_presentation(pres).slides[0].placeholders[1].text_frame.paragraphs[0]
