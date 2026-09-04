@@ -9,6 +9,7 @@ import asyncio
 import io
 import re
 import sys
+import tempfile
 import zipfile
 from pathlib import Path
 
@@ -17,6 +18,7 @@ sys.path.insert(0, str(project_root))
 
 import pytest
 from pptx import Presentation as PptxReader
+from pptx.oxml.ns import qn as pptx_qn
 from starlette.testclient import TestClient
 
 import admin.store as store_mod
@@ -35,6 +37,26 @@ TEMPLATE_4_3 = project_root / "default_templates" / "default_pptx_template_4_3.p
 @pytest.fixture
 def pptx_bytes():
     return TEMPLATE_16_9.read_bytes()
+
+
+def _template_with_a_duplicate_role() -> bytes:
+    """A template where two layouts classify as the same role.
+
+    Neither shipped template has one: their eight detected layouts map one to
+    one onto the eight roles, so first-wins and last-wins tie-breaking are
+    indistinguishable on them. Turning a vertical-text layout horizontal gives
+    it the TITLE+BODY signature of a section header — which is precisely the
+    collision ``_is_vertical`` exists to prevent — and so produces the tie a
+    tie-breaking test needs.
+    """
+    prs = PptxReader(str(TEMPLATE_16_9))
+    for placeholder in prs.slide_layouts[9].placeholders:      # 'Nadpis a svislý text'
+        body_pr = placeholder.text_frame._txBody.find(pptx_qn("a:bodyPr"))
+        if body_pr is not None and body_pr.get("vert"):
+            body_pr.set("vert", "horz")
+    buf = io.BytesIO()
+    prs.save(buf)
+    return buf.getvalue()
 
 
 def _as_potx(data: bytes) -> bytes:
@@ -147,6 +169,57 @@ class TestAnalyzePptx:
     def test_layout_names_drive_the_role_dropdowns(self, pptx_bytes):
         a = analyze_pptx(pptx_bytes)
         assert a.layout_names == [layout.name for layout in a.layouts]
+
+    @pytest.mark.parametrize("path", [TEMPLATE_16_9, TEMPLATE_4_3])
+    def test_the_reported_role_map_is_what_the_builder_will_actually_use(self, path):
+        """The UI's claim must match the resolver's behaviour, not merely resemble it.
+
+        Both pick the first layout classifying as each role, but that is two
+        separate implementations of the same rule in two modules. If either
+        side's tie-breaking drifts, the admin page would report a mapping the
+        tool does not honour — worse than reporting nothing, because it looks
+        authoritative.
+        """
+        from pptx_tools.layouts import ROLES, LayoutResolver
+        from pptx_tools.templates import open_template
+
+        reported = analyze_pptx(path.read_bytes()).role_map
+        resolver = LayoutResolver(open_template(path))
+
+        for role in ROLES:
+            layout, warning = resolver.resolve(role)
+            if role in reported:
+                assert reported[role] == layout.name, f"{role} disagrees"
+                assert warning is None, f"{role} resolved with a warning: {warning}"
+            else:
+                # A role the UI reports as missing must be one the resolver
+                # cannot satisfy either — it falls back by position and says so.
+                assert warning is not None, f"{role} was omitted but resolves cleanly"
+
+    def test_a_contested_role_reports_the_layout_the_resolver_picks(self):
+        """The agreement test above cannot see tie-breaking; this one can.
+
+        On the shipped templates every detected role has exactly one layout, so
+        first-wins and last-wins agree and a divergence would go unnoticed. With
+        two layouts claiming ``section``, only the earlier one is correct.
+        """
+        from pptx_tools.layouts import LayoutResolver
+        from pptx_tools.templates import open_template
+
+        data = _template_with_a_duplicate_role()
+        analysis = analyze_pptx(data)
+
+        claimants = [layout.name for layout in analysis.layouts if layout.role == "section"]
+        assert len(claimants) == 2, "fixture no longer produces a contested role"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "tie.pptx"
+            path.write_bytes(data)
+            layout, warning = LayoutResolver(open_template(path)).resolve("section")
+
+        assert analysis.role_map["section"] == claimants[0]
+        assert analysis.role_map["section"] == layout.name
+        assert warning is None
 
 
 # =============================================================================
