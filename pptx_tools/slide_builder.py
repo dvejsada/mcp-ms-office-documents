@@ -29,7 +29,7 @@ from .constants import (
     KPI_VALUE_FONT_SIZE, TIMELINE_DETAIL_FONT_SIZE,
     TIMELINE_STEP_HEIGHT, TIMELINE_STEP_MIN_HEIGHT,
     TIMELINE_DETAIL_GAP, TIMELINE_DETAIL_HEIGHT,
-    TABLE_HEADER_FILL,
+    TABLE_HEADER_FILL, TABLE_FONT_SIZE_RANGE,
     DEFAULT_SLIDE_FORMAT, VALID_SLIDE_FORMATS,
 )
 from .helpers import (
@@ -147,6 +147,49 @@ class PowerpointPresentation(SlideHelpers):
         if key in defaults and defaults[key] is not None:
             return defaults[key]
         return fallback
+
+    def _coerce_bool(self, value, option: str, index: int, fallback: bool) -> bool:
+        """A boolean from a template default, which YAML may have left as text.
+
+        A quoted ``"false"`` in the registry parses as the string ``"false"``,
+        and ``bool("false")`` is True — the setting would invert with no
+        warning. Text is read the way a person meant it; anything unrecognised
+        is reported and the built-in used. A slide's own value is always a real
+        bool by the time it gets here, so this only ever acts on template input.
+        """
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        text = str(value).strip().lower()
+        if text in ("true", "yes", "on", "1"):
+            return True
+        if text in ("false", "no", "off", "0"):
+            return False
+        self._warn(index, f"template {option} {value!r} is not true/false; used {fallback}.")
+        return fallback
+
+    def _coerce_font_size(self, value, index: int) -> Optional[int]:
+        """An integer point size within the range the slide schema enforces.
+
+        A template default bypasses that schema, so a typo like 200 was applied
+        verbatim — a broken-looking table where the non-numeric case already
+        produced a warning. Out-of-range values are clamped and reported.
+        """
+        try:
+            points = int(value)
+        except (TypeError, ValueError):
+            self._warn(index, f"template table font_size {value!r} is not a number; ignored.")
+            return None
+        low, high = TABLE_FONT_SIZE_RANGE
+        if not low <= points <= high:
+            clamped = max(low, min(points, high))
+            self._warn(
+                index,
+                f"template table font_size {points} is outside {low}–{high}; used {clamped}.",
+            )
+            return clamped
+        return points
 
     def _create_presentation(self, format: str, template: Optional[str] = None,
                              template_spec: Optional[TemplateSpec] = None) -> Presentation:
@@ -367,14 +410,13 @@ class PowerpointPresentation(SlideHelpers):
             self._setting(slide_data, "header_color", table_defaults, "header_fill", None),
             TABLE_HEADER_FILL,
         )
-        zebra = bool(self._setting(slide_data, "zebra", table_defaults, "zebra", True))
+        zebra = self._coerce_bool(
+            self._setting(slide_data, "zebra", table_defaults, "zebra", True),
+            "table zebra", index, fallback=True,
+        )
         font_size = self._setting(slide_data, "font_size", table_defaults, "font_size", None)
         if font_size is not None:
-            try:
-                font_size = int(font_size)
-            except (TypeError, ValueError):
-                self._warn(index, f"template table font_size {font_size!r} is not a number; ignored.")
-                font_size = None
+            font_size = self._coerce_font_size(font_size, index)
 
         _, points = self._create_styled_table(
             slide,
@@ -529,10 +571,11 @@ class PowerpointPresentation(SlideHelpers):
                 legend_position=slide_data.legend,
                 title=slide_data.chart_title,
             )
-            data_labels = self._setting(
-                slide_data, "data_labels", self._chart_defaults, "data_labels", False
+            data_labels = self._coerce_bool(
+                self._setting(slide_data, "data_labels", self._chart_defaults, "data_labels", False),
+                "chart data_labels", index, fallback=False,
             )
-            configure_data_labels(chart, bool(data_labels), slide_data.number_format)
+            configure_data_labels(chart, data_labels, slide_data.number_format)
             set_axis_titles(chart, slide_data.x_title, slide_data.y_title)
         except ChartDataError as e:
             logger.error(f"Chart error: {e}")

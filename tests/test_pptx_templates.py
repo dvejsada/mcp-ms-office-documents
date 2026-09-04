@@ -511,6 +511,32 @@ class TestTableAndChartDefaults:
         pres = build([{"type": "table", "rows": self.TABLE}], template="brand")
         assert any("font_size 'big' is not a number" in w for w in pres.warnings)
 
+    def test_an_out_of_range_font_size_is_clamped_and_reported(self, registry):
+        """A template value bypasses the schema's 6–40 bound; a typo of 200 was
+        applied verbatim. Review flagged the asymmetry with the non-numeric guard."""
+        self._register(registry, {"table": {"font_size": 200}})
+        pres = build([{"type": "table", "rows": self.TABLE}], template="brand")
+        table = self._table_of(pres)
+        assert table.cell(1, 0).text_frame.paragraphs[0].font.size == Pt(40)
+        assert any("outside 6–40; used 40" in w for w in pres.warnings)
+
+    def test_a_quoted_false_in_yaml_still_turns_zebra_off(self, registry):
+        """YAML `zebra: "false"` is the string "false", and bool("false") is True."""
+        self._register(registry, {"table": {"zebra": "false"}})
+        table = self._table_of(build([{"type": "table", "rows": self.TABLE}], template="brand"))
+        assert "<a:solidFill>" not in table.cell(2, 0)._tc.xml
+
+    def test_a_quoted_true_in_yaml_turns_data_labels_on(self, registry):
+        self._register(registry, {"chart": {"data_labels": "true"}})
+        chart = self._chart_of(build([{"type": "chart", **self.CHART}], template="brand"))
+        assert chart.plots[0].has_data_labels
+
+    def test_an_unrecognised_boolean_is_reported_and_the_built_in_used(self, registry):
+        self._register(registry, {"table": {"zebra": "maybe"}})
+        pres = build([{"type": "table", "rows": self.TABLE}], template="brand")
+        assert "<a:solidFill>" in self._table_of(pres).cell(2, 0)._tc.xml   # built-in: on
+        assert any("zebra 'maybe' is not true/false" in w for w in pres.warnings)
+
     def test_data_labels_from_the_template(self, registry):
         self._register(registry, {"chart": {"data_labels": True}})
         chart = self._chart_of(build([{"type": "chart", **self.CHART}], template="brand"))

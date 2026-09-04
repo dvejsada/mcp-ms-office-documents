@@ -89,6 +89,10 @@ MIN_AUTOFIT_SCALE = 0.6
 
 # Tables get shrunk by row count rather than by text metrics.
 TABLE_MIN_FONT_SIZE = 9
+# The point sizes a caller may ask for. The slide schema enforces this on the
+# tool call; the builder enforces it on a template default, which bypasses the
+# schema and would otherwise apply a typo like 200 verbatim.
+TABLE_FONT_SIZE_RANGE = (6, 40)
 # Rough row height (in points) per point of font size, including cell padding.
 TABLE_ROW_HEIGHT_PER_POINT = 2.1
 

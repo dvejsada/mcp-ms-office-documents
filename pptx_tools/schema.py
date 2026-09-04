@@ -42,7 +42,7 @@ from pydantic import (
     field_validator,
 )
 
-from .constants import MAX_INDENT_LEVEL
+from .constants import MAX_INDENT_LEVEL, TABLE_FONT_SIZE_RANGE
 
 logger = logging.getLogger(__name__)
 
@@ -215,7 +215,10 @@ class TableSlide(SlideBase):
     )
     header_color: Optional[Color] = Field(default=None, description="Header fill colour.")
     zebra: bool = Field(default=True, description="Shade alternating rows.")
-    font_size: Optional[int] = Field(default=None, ge=6, le=40, description="Cell font size in points.")
+    font_size: Optional[int] = Field(
+        default=None, ge=TABLE_FONT_SIZE_RANGE[0], le=TABLE_FONT_SIZE_RANGE[1],
+        description="Cell font size in points.",
+    )
 
 
 class ChartSlide(SlideBase):
