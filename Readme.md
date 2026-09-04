@@ -608,6 +608,11 @@ restarting the server**.
 The file `config/pptx_templates.yaml` in this repository documents every option
 in full.
 
+You can also register and configure templates from the browser instead of
+writing YAML — see [Template Admin UI](#-template-admin-ui-optional). It reports
+each layout's detected role and previews a sample deck through the template
+before you save.
+
 </details>
 
 ### Dynamic Email Templates
@@ -787,8 +792,8 @@ Unknown style names fall back to the document default (with a logged warning) ra
 ## 🖥️ Template Admin UI (optional)
 
 Prefer clicking over editing YAML? Enable the built-in **template-admin UI** to
-create and manage dynamic **Word** and **email** templates from your browser —
-no YAML, no restart.
+create and manage dynamic **Word**, **email** and **PowerPoint** templates from
+your browser — no YAML, no restart.
 
 <details>
 <summary><strong>How to enable and use it</strong></summary>
@@ -824,10 +829,33 @@ http://localhost:8958/admin
   used this session), and a recent activity & error log (filterable to
   warnings/errors).
 
+**PowerPoint templates work differently.** A Word or email template is a
+fill-in-the-blanks document: it declares arguments and becomes an MCP tool of
+its own. A PowerPoint template is a *design* — slide master, layouts, theme
+fonts and palette — with no placeholders and no arguments. It does not become a
+tool; it becomes one more value you can pass as the `template` argument of
+`create_powerpoint_presentation`. So its page looks different:
+
+- **Upload** a `.pptx` or a `.potx` (a designer's template file is taken as
+  readily as a deck).
+- The UI reports the **slide size and aspect**, every **layout** with its
+  placeholders and the slide role auto-detected for it, and the **theme** fonts
+  and colours. It warns about the things that actually spoil a generated deck:
+  a role no layout covers (those slides fall back by position), layouts with no
+  footer placeholder, and sample slides left in the file.
+- **Override a layout per role** only where the automatic choice is wrong — the
+  dropdowns are populated with the template's real layout names.
+- Set **deck defaults** — footer text, language, slide numbers — applied
+  whenever a tool call does not set the same option.
+- **Preview** builds a real six-slide sample deck through the template, using
+  the layout choices on screen *including ones you have not saved yet*.
+- **Save** — the presentation tool can build on it immediately, no restart.
+
 **How it's stored:** the UI writes one file per template into
-`config/docx_templates.d/` or `config/email_templates.d/` (plus the asset into
-`custom_templates/`). Your hand-written master `config/*.yaml` files are never
-modified — UI templates are simply merged on top of them at load time.
+`config/docx_templates.d/`, `config/email_templates.d/` or
+`config/pptx_templates.d/` (plus the asset into `custom_templates/`). Your
+hand-written master `config/*.yaml` files are never modified — UI templates are
+simply merged on top of them at load time.
 
 > **Single-instance note:** live, no-restart registration assumes one server
 > instance owns the template files (the standard docker-compose setup). For a
