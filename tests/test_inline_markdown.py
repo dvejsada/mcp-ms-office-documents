@@ -78,9 +78,31 @@ class TestNesting:
         assert FULL.search("**bold with a * lone star**") is not None
 
     def test_a_lone_star_cannot_eat_half_of_a_closer(self):
+        assert FULL.search("**a *b c**") is not None
         assert tokens(FULL, "**a *b c**") == ["**a *b c**"]      # bold "a *b c"
-        assert tokens(FULL, "**a**") == ["**a**"]
-        assert tokens(FULL, "**a ***") == ["**a ***"]           # trailing lone star
+        assert FULL.search("**a**") is not None
+
+    def test_three_stars_after_a_space_close_nothing(self):
+        """Not a span, and that is correct: the run "***" is preceded by a
+        space, so under CommonMark it is neither a closer nor an opener.
+        PowerPoint's old grammar agreed. Word's old grammar did not — it
+        closed greedily on the first two stars, right after the space, which
+        is the missing right flank this unification removed.
+
+        Found in review: this input used to be asserted with ``tokens()``,
+        whose output for a wholly unmatched string is the string itself — so
+        the assertion held whether or not the grammar recognised anything.
+        ``search`` cannot be fooled that way.
+
+        The renderers then diverge on the whole-string form, and that is
+        pre-existing and outside the grammar: Word's dispatcher rescues any
+        *whole* part that starts and ends with "**", so "**a ***" alone comes
+        out bold "a *"; PowerPoint never dispatches text the grammar does not
+        match, so it comes out literal. Mid-sentence, nothing rescues it in
+        either — both render it literally, which is what the grammar says."""
+        assert FULL.search("**a ***") is None
+        assert tokens(FULL, "before **a *** after") == ["before **a *** after"]
+        assert FULL.search("before **a *** after") is None
 
     def test_no_catastrophic_backtracking_on_adversarial_input(self):
         """The lone-star and nested-italic alternatives share a first character,
@@ -187,6 +209,20 @@ class TestRendered:
         runs = self._pptx_runs("see **a * b** now")
         assert "".join(r.text for r in runs) == "see a * b now"
         assert [r.font.bold for r in runs if r.text == "a * b"] == [True]
+
+    def test_three_stars_after_a_space_render_literally_mid_sentence_in_both(self):
+        """The unmasked form of the review finding: no rescue can fire here."""
+        from docx_tools.inline_formatting import parse_inline_formatting
+
+        doc = Document()
+        para = doc.add_paragraph()
+        parse_inline_formatting("before **a *** after", para)
+        assert "".join(r.text for r in para.runs) == "before **a *** after"
+        assert not any(r.bold for r in para.runs)
+
+        runs = self._pptx_runs("before **a *** after")
+        assert "".join(r.text for r in runs) == "before **a *** after"
+        assert not any(r.font.bold for r in runs)
 
     def test_docx_subscript_still_renders_when_flanked(self):
         from docx_tools.inline_formatting import parse_inline_formatting
