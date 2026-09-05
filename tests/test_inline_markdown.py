@@ -66,6 +66,31 @@ class TestNesting:
     def test_triple_star_is_bold_italic_not_bold_plus_star(self):
         assert tokens(FULL, "***bi***") == ["***bi***"]
 
+    def test_a_lone_star_inside_a_span_stays_literal(self):
+        """Found in review: the first unified grammar could not match a span
+        containing a space-flanked '*', so the whole span fell through. Both
+        old grammars handled it. The whole-string case was masked — the
+        dispatchers test a part's prefix and suffix whether or not the regex
+        matched it — so the assertions here use spans that are *not* the
+        whole string, where nothing masks the failure."""
+        assert tokens(FULL, "see **a * b** now") == ["see ", "**a * b**", " now"]
+        assert tokens(FULL, "see *a * b* now") == ["see ", "*a * b*", " now"]
+        assert FULL.search("**bold with a * lone star**") is not None
+
+    def test_a_lone_star_cannot_eat_half_of_a_closer(self):
+        assert tokens(FULL, "**a *b c**") == ["**a *b c**"]      # bold "a *b c"
+        assert tokens(FULL, "**a**") == ["**a**"]
+        assert tokens(FULL, "**a ***") == ["**a ***"]           # trailing lone star
+
+    def test_no_catastrophic_backtracking_on_adversarial_input(self):
+        """The lone-star and nested-italic alternatives share a first character,
+        so the engine can branch at every '*'. Bound the cost."""
+        import time
+        hostile = "**" + "a * " * 400 + "b"     # many lone stars, no closer
+        start = time.perf_counter()
+        FULL.findall(hostile)
+        assert time.perf_counter() - start < 1.0
+
 
 class TestEscapes:
 
@@ -148,6 +173,20 @@ class TestRendered:
         parse_inline_formatting("5 * 3 * 2 = 30", para)
         assert not any(r.italic for r in para.runs)
         assert "".join(r.text for r in para.runs) == "5 * 3 * 2 = 30"
+
+    def test_both_renderers_keep_a_lone_star_inside_bold_mid_sentence(self):
+        """The rendered form of the review finding, on the unmasked case."""
+        from docx_tools.inline_formatting import parse_inline_formatting
+
+        doc = Document()
+        para = doc.add_paragraph()
+        parse_inline_formatting("see **a * b** now", para)
+        assert "".join(r.text for r in para.runs) == "see a * b now"
+        assert [r.bold for r in para.runs if r.text.strip() in ("a * b",)] == [True]
+
+        runs = self._pptx_runs("see **a * b** now")
+        assert "".join(r.text for r in runs) == "see a * b now"
+        assert [r.font.bold for r in runs if r.text == "a * b"] == [True]
 
     def test_docx_subscript_still_renders_when_flanked(self):
         from docx_tools.inline_formatting import parse_inline_formatting

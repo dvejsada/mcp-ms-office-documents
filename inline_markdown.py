@@ -41,12 +41,18 @@ LINK_RE = re.compile(r"^\[([^\]\n]+)\]\(([^)\s]+)\)$")
 _NESTED_ITALIC = r"\*[^\s*][^*]*?(?<=[^\s*])\*"
 # One nested bold unit, usable inside an italic span.
 _NESTED_BOLD = r"\*\*[^*]+\*\*"
+# A single '*' that opens nothing — "**a * b**" — stays literal inside a span.
+# Both renderers' old grammars had this; the first unified version dropped it,
+# and a span containing one then failed to match at all. It is tried after the
+# nested unit, so a real nested span is never read as a stray marker, and it
+# refuses a '*' followed by another so it can never eat half of a "**" closer.
+_LONE_STAR = r"\*(?!\*)"
 
 _BOLD_ITALIC = r"\*{3}(?=[^\s*])(?:[^*]|\*(?!\*{2}))+?(?<=[^\s*])\*{3}"
 # Bold, allowing a nested *italic* — including as the very last thing before
 # the closer, which a plain lookbehind would reject ("**a *b***").
 _BOLD = (
-    r"\*\*(?=[^\s*])(?:[^*]|" + _NESTED_ITALIC + r")*?"
+    r"\*\*(?=[^\s*])(?:[^*]|" + _NESTED_ITALIC + r"|" + _LONE_STAR + r")*?"
     r"(?:[^\s*]|" + _NESTED_ITALIC + r")\*\*"
 )
 _STRIKE = r"~~(?=[^\s~]).+?(?<=[^\s~])~~"
@@ -54,7 +60,7 @@ _HIGHLIGHT = r"==(?=[^\s=]).+?(?<=[^\s=])=="
 _UNDERLINE = r"__(?=[^\s_]).+?(?<=[^\s_])__"
 # Italic, allowing a nested **bold** — same structural closer as bold.
 _ITALIC = (
-    r"\*(?=[^\s*])(?:[^*]|" + _NESTED_BOLD + r")*?"
+    r"\*(?=[^\s*])(?:[^*]|" + _NESTED_BOLD + r"|" + _LONE_STAR + r")*?"
     r"(?:[^\s*]|" + _NESTED_BOLD + r")\*"
 )
 _CODE = r"`[^`]+`"
