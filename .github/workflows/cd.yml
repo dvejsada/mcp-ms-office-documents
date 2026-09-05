@@ -39,8 +39,11 @@ jobs:
           context: .
           push: true
           platforms: linux/amd64,linux/arm64
+          # A prerelease must not become `latest`: everyone pulling the default
+          # tag would get the beta. `latest` moves only on a full release; the
+          # expression yields an empty line otherwise, which the action ignores.
           tags: |
             georgx22/mcp-office-docs:${{ github.event.release.tag_name }}
-            georgx22/mcp-office-docs:latest
+            ${{ !github.event.release.prerelease && 'georgx22/mcp-office-docs:latest' || '' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
