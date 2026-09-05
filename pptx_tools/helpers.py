@@ -26,7 +26,7 @@ from .constants import (
     TABLE_HEADER_FILL, TABLE_HEADER_TEXT, TABLE_ALT_ROW_FILL,
 )
 from .schema import Bullet, THEME_COLORS
-from .image_utils import load_image, ImageDownloadError, ImageValidationError
+from image_utils import load_image, ImageDownloadError, ImageValidationError
 from .inline_formatting import needs_inline_processing, apply_inline_formatting
 
 logger = logging.getLogger(__name__)

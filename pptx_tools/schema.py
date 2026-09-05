@@ -42,7 +42,7 @@ from pydantic import (
     field_validator,
 )
 
-from .constants import MAX_INDENT_LEVEL
+from .constants import MAX_INDENT_LEVEL, TABLE_FONT_SIZE_RANGE
 
 logger = logging.getLogger(__name__)
 
@@ -215,7 +215,10 @@ class TableSlide(SlideBase):
     )
     header_color: Optional[Color] = Field(default=None, description="Header fill colour.")
     zebra: bool = Field(default=True, description="Shade alternating rows.")
-    font_size: Optional[int] = Field(default=None, ge=6, le=40, description="Cell font size in points.")
+    font_size: Optional[int] = Field(
+        default=None, ge=TABLE_FONT_SIZE_RANGE[0], le=TABLE_FONT_SIZE_RANGE[1],
+        description="Cell font size in points.",
+    )
 
 
 class ChartSlide(SlideBase):
@@ -297,6 +300,91 @@ class ClosingSlide(SlideBase):
     )
 
 
+# ---------------------------------------------------------------------------
+# Blank slide with positioned elements — the escape hatch
+# ---------------------------------------------------------------------------
+
+_POSITION_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*(%|in)?\s*$")
+
+
+def _validate_position(value: Any) -> Any:
+    """A length as inches (number, or "1.5in") or a share of the slide ("40%").
+
+    Kept as written and resolved against the real slide size at build time;
+    validation here is only that it can be resolved at all.
+    """
+    if isinstance(value, bool):
+        raise ValueError("position must be a number or a string, not a boolean")
+    if isinstance(value, (int, float)):
+        if value < 0:
+            raise ValueError("position must not be negative")
+        return float(value)
+    if isinstance(value, str) and _POSITION_RE.match(value):
+        return value.strip()
+    raise ValueError(
+        f"position {value!r} must be inches (2, 1.5, '1.5in') or a percentage ('40%')"
+    )
+
+
+Position = Annotated[Union[float, str], BeforeValidator(_validate_position)]
+
+
+class ElementBase(BaseModel):
+    """One thing placed on a blank slide, at an explicit position."""
+    model_config = ConfigDict(extra="forbid")
+
+    x: Position = Field(description="Left edge: inches, or a percentage of the slide width.")
+    y: Position = Field(description="Top edge: inches, or a percentage of the slide height.")
+    w: Position = Field(description="Width: inches, or a percentage of the slide width.")
+    h: Optional[Position] = Field(
+        default=None,
+        description="Height: inches or a percentage. Images keep their aspect ratio "
+                    "within it; text boxes default to one inch; shapes default to their width.",
+    )
+
+
+class TextElement(ElementBase):
+    kind: Literal["text"]
+    text: str = Field(description="Text, with the same inline markdown as a bullet.")
+    font_size: Optional[int] = Field(default=None, ge=6, le=120, description="Points.")
+    align: Literal["left", "center", "right"] = Field(default="left")
+    bold: bool = Field(default=False)
+
+
+class ImageElement(ElementBase):
+    kind: Literal["image"]
+    source: str = Field(description="Image https URL, or a data URI (data:image/png;base64,...).")
+
+
+class ShapeElement(ElementBase):
+    kind: Literal["shape"]
+    shape: Literal["rectangle", "rounded_rectangle", "ellipse", "chevron", "arrow"] = Field(
+        default="rectangle"
+    )
+    fill: Optional[Color] = Field(default=None, description="Fill: hex or a theme colour name.")
+    text: Optional[str] = Field(default=None, description="Text centred inside the shape.")
+
+
+Element = Annotated[
+    Union[TextElement, ImageElement, ShapeElement],
+    Field(discriminator="kind"),
+]
+
+
+class BlankSlide(SlideBase):
+    """Positioned elements on an empty layout, for the slide no other type fits.
+
+    Every other type decides where things go. This one takes coordinates and
+    draws exactly what it is given, which is the right tool for a one-off
+    layout and the wrong one for anything the typed slides can express.
+    """
+    type: Literal["blank"]
+    elements: List[Element] = Field(
+        min_length=1, max_length=20,
+        description="Elements drawn in order; later ones sit on top.",
+    )
+
+
 class TimelineSlide(SlideBase):
     type: Literal["timeline"]
     steps: List[Step] = Field(
@@ -317,7 +405,7 @@ class QuoteSlide(SlideBase):
 _SLIDE_MODELS = (
     TitleSlide, SectionSlide, ContentSlide, TableSlide,
     ChartSlide, ScatterSlide, ImageSlide, TwoColumnSlide, QuoteSlide,
-    KpiSlide, AgendaSlide, ClosingSlide, TimelineSlide,
+    KpiSlide, AgendaSlide, ClosingSlide, TimelineSlide, BlankSlide,
 )
 
 SLIDE_TYPES = tuple(sorted(m.model_fields["type"].annotation.__args__[0] for m in _SLIDE_MODELS))
@@ -326,7 +414,7 @@ AnySlide = Annotated[
     Union[
         TitleSlide, SectionSlide, ContentSlide, TableSlide,
         ChartSlide, ScatterSlide, ImageSlide, TwoColumnSlide, QuoteSlide,
-        KpiSlide, AgendaSlide, ClosingSlide, TimelineSlide,
+        KpiSlide, AgendaSlide, ClosingSlide, TimelineSlide, BlankSlide,
     ],
     Field(discriminator="type"),
 ]

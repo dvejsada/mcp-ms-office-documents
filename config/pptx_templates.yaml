@@ -1,0 +1,101 @@
+# PowerPoint Template Registry
+#
+# Register one or more .pptx / .potx templates the presentation tool can build
+# on. Each entry becomes a value the model can pass as the `template` argument
+# of create_powerpoint_presentation, and `list_presentation_templates` reports
+# them with their aspect ratio and layout names.
+#
+# THIS FILE IS OPTIONAL. With no registry at all the server behaves exactly as
+# before: it looks for custom_pptx_template_16_9.pptx and
+# custom_pptx_template_4_3.pptx in custom_templates/, falling back to the
+# shipped defaults. Nothing needs changing to keep that behaviour.
+#
+# Templates managed through the admin UI are written as individual files in
+# config/pptx_templates.d/<name>.yaml and merged on top of this file; an entry
+# there with the same `name` wins. This file is never rewritten by tooling.
+#
+# =============================================================================
+# HOW A LAYOUT IS CHOSEN
+# =============================================================================
+# Layouts are matched by name and by shape, never by position — a template that
+# reorders or renames its layouts still works. Resolution order, most specific
+# first:
+#
+#   1. the `layout` field on the slide itself (a layout name)
+#   2. the `layouts:` mapping below
+#   3. automatic detection from each layout's placeholders
+#   4. the positional index, with a warning returned to the caller
+#
+# Automatic detection recognises these roles, so most templates need no
+# `layouts:` mapping at all:
+#
+#   title        a centred title plus a subtitle placeholder
+#   section      a title plus one BODY placeholder
+#   content      a title plus one OBJECT placeholder
+#   two_column   a title plus two OBJECT placeholders
+#   comparison   a title plus four content placeholders (heading, body, twice)
+#   image_text   any layout with a PICTURE placeholder
+#   title_only   a title and nothing else
+#   blank        no placeholders at all
+#
+# Detection is language-independent: it reads placeholder types, not names, so
+# a Czech or German template classifies from the same rules as an English one.
+# Vertical-text layouts are never auto-selected, because they share a signature
+# with their horizontal counterparts; name one explicitly if you want it.
+#
+# Which role each slide type asks for:
+#   title -> title, section -> section, two_column -> two_column or comparison
+#   (depending on whether its columns have headings), and everything else
+#   (content, table, chart, scatter, image, quote) -> content.
+#
+# =============================================================================
+# CHECKING A TEMPLATE
+# =============================================================================
+# Every registered template is opened once at startup and its coverage logged.
+# A template missing a role logs a warning naming it, and slides of that type
+# fall back by position. Call list_presentation_templates with
+# include_layouts: true to see the same information from a client.
+#
+# Templates are re-read when the config or template directories change, so a
+# new or edited template takes effect without restarting the server.
+
+templates:
+  # ---------------------------------------------------------------------------
+  # Example: a corporate brand deck. Delete or replace with your own.
+  # ---------------------------------------------------------------------------
+  # - name: corporate_16_9
+  #   description: >
+  #     Brand deck, widescreen. Use for all client-facing presentations.
+  #   pptx_path: corporate_16_9.pptx   # bare filename, in custom_templates/
+  #   default: true                    # used when `template` is not given
+  #
+  #   # Optional. Only needed when automatic detection picks the wrong layout,
+  #   # or for a role it cannot detect. Values are layout NAMES as they appear
+  #   # in PowerPoint's "Slide Master" view. Any role you omit is detected.
+  #   layouts:
+  #     title: "Title Slide"
+  #     section: "Section Header"
+  #     content: "Title and Content"
+  #     two_column: "Two Content"
+  #     comparison: "Comparison"
+  #     image_text: "Picture with Caption"
+  #
+  #   # Optional. Applied when the tool call does not set the same option.
+  #   defaults:
+  #     footer_text: "ACME s.r.o. · Confidential"
+  #     show_slide_numbers: true
+  #     language: cs-CZ
+  #     table:
+  #       header_fill: accent1     # theme colour name, or 6-digit hex
+  #       zebra: true
+  #       font_size: 14
+  #     chart:
+  #       data_labels: false
+  #
+  #   # Drop any slides the template file itself contains (sample slides a
+  #   # designer left in). Default true; they never belong in generated output.
+  #   strip_slides: true
+
+  # - name: legacy_4_3
+  #   description: Older 4:3 deck, for printed handouts.
+  #   pptx_path: legacy_4_3.pptx

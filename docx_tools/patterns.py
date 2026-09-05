@@ -5,7 +5,8 @@ docx_tools package can import them without circular dependencies.
 """
 
 import re
-import string
+
+from inline_markdown import ESCAPE_RE, LINK_RE, build_inline_pattern
 
 # ---------------------------------------------------------------------------
 # Block-level patterns (compiled once, used by many modules)
@@ -45,30 +46,13 @@ _BLOCK_PATTERNS = [
 # Inline formatting patterns
 # ---------------------------------------------------------------------------
 
-_INLINE_FORMAT_RE = re.compile(
-    r'(\*{3}(?:[^*]|\*(?!\*{2}))+\*{3}'  # ***bold italic***
-    r'|\*\*(?:[^*]|\*[^*]+\*|\*(?!\*))+\*\*'  # **bold** (allows nested *italic*, incl. at the ***close)
-    r'|~~.+?~~'                           # ~~strikethrough~~
-    r'|==.+?=='                           # ==highlight==
-    r'|__(?!_).+?__'                      # __underline__
-    r'|\*(?:[^*]|\*\*[^*]+\*\*)+\*'       # *italic* (allows nested **bold**)
-    r'|`[^`]+`'                           # `code`
-    r'|\^[^^]+\^'                         # ^superscript^
-    r'|~(?!~)[^~]+~'                      # ~subscript~ (single tilde, not ~~)
-    r'|\[[^\]]*\]\([^)]*\))'             # [link](url)
-)
-
-_LINK_RE = re.compile(r'\[(.*?)]\((.*?)\)')        # [link text](url)
-# A backslash escapes only the ASCII punctuation markdown uses as markers
-# (\*, \`, \., \\ …). It must NOT swallow the backslash before other characters:
-# a bare "\n" is the two literal characters backslash+n, not a markdown escape,
-# and the old r'\\(.)' collapsed it to a stray "n" (and corrupted "\t", Windows
-# paths like C:\new, etc.). Literal "\n"/"\r\n" sequences are turned into real
-# line breaks separately by normalize_escaped_newlines().
-# re.escape() is used to build the character class so the chars that ARE special
-# inside [...] (']', '\', '^', '-') are emitted as literals; the extra escaping of
-# the other punctuation is harmless.
-_ESCAPE_RE = re.compile(r'\\([' + re.escape(string.punctuation) + r'])')
+# The emphasis grammar is shared with the PowerPoint renderer — see
+# inline_markdown.py for the rules and why there is one copy. Word can draw
+# every span, so it asks for all of them. These names are kept so the five
+# modules that import them need not change.
+_INLINE_FORMAT_RE = build_inline_pattern(highlight=True, superscript=True, subscript=True)
+_LINK_RE = LINK_RE
+_ESCAPE_RE = ESCAPE_RE
 # Literal newline escape sequences ("\n", "\r\n", "\r" written as text) that LLMs
 # often emit instead of a real newline. Longest alternative first so "\r\n"
 # collapses to a single break rather than two.

@@ -19,7 +19,7 @@ sys.path.insert(0, str(project_root))
 import pytest
 import yaml
 from pptx import Presentation as PptxReader
-from pptx.util import Emu
+from pptx.util import Emu, Pt
 
 from pptx_tools import layouts as layouts_mod
 from pptx_tools import templates as templates_mod
@@ -435,6 +435,124 @@ class TestRegistry:
         ]
         assert any("From the call" in text for text in texts)
         assert not any("From template" in text for text in texts)
+
+
+class TestTableAndChartDefaults:
+    """The registry's table/chart defaults must reach the deck.
+
+    Found in the pre-release review: ``defaults.table`` and ``defaults.chart``
+    were parsed into the spec and copied onto the builder, then never read —
+    four documented options, all inert. A footer test alone could not see it,
+    because footer_text was wired and these were not.
+    """
+
+    TABLE = [["Col A", "Col B"], ["1", "2"], ["3", "4"], ["5", "6"]]
+    CHART = {"chart_type": "bar", "categories": ["x", "y"],
+             "series": [{"name": "s", "values": [1, 2]}]}
+
+    def _register(self, registry, defaults):
+        make_template(registry["custom"] / "brand.pptx")
+        write_registry(registry["config"], [{
+            "name": "brand", "pptx_path": "brand.pptx", "default": True,
+            "defaults": defaults,
+        }])
+
+    @staticmethod
+    def _table_of(pres):
+        return [s for s in pres.presentation.slides[0].shapes if s.has_table][0].table
+
+    @staticmethod
+    def _chart_of(pres):
+        return [s for s in pres.presentation.slides[0].shapes if s.has_chart][0].chart
+
+    def test_header_fill_comes_from_the_template(self, registry):
+        self._register(registry, {"table": {"header_fill": "FF0000"}})
+        table = self._table_of(build([{"type": "table", "rows": self.TABLE}], template="brand"))
+        assert str(table.cell(0, 0).fill.fore_color.rgb) == "FF0000"
+
+    def test_header_fill_accepts_a_theme_name(self, registry):
+        self._register(registry, {"table": {"header_fill": "accent2"}})
+        table = self._table_of(build([{"type": "table", "rows": self.TABLE}], template="brand"))
+        assert "accent2" in table.cell(0, 0)._tc.xml
+
+    def test_an_explicit_header_colour_beats_the_template(self, registry):
+        self._register(registry, {"table": {"header_fill": "FF0000"}})
+        table = self._table_of(build(
+            [{"type": "table", "rows": self.TABLE, "header_color": "00FF00"}], template="brand"))
+        assert str(table.cell(0, 0).fill.fore_color.rgb) == "00FF00"
+
+    def test_zebra_off_from_the_template(self, registry):
+        self._register(registry, {"table": {"zebra": False}})
+        table = self._table_of(build([{"type": "table", "rows": self.TABLE}], template="brand"))
+        # With zebra on, row 2 (the second data row) is shaded; off, it carries
+        # no explicit solid fill of its own.
+        assert "<a:solidFill>" not in table.cell(2, 0)._tc.xml
+
+    def test_zebra_on_in_the_call_beats_a_template_that_turns_it_off(self, registry):
+        """The slide's value is honoured even though it equals the schema default."""
+        self._register(registry, {"table": {"zebra": False}})
+        table = self._table_of(build(
+            [{"type": "table", "rows": self.TABLE, "zebra": True}], template="brand"))
+        assert "<a:solidFill>" in table.cell(2, 0)._tc.xml
+
+    def test_font_size_from_the_template(self, registry):
+        self._register(registry, {"table": {"font_size": 9}})
+        table = self._table_of(build([{"type": "table", "rows": self.TABLE}], template="brand"))
+        assert table.cell(1, 0).text_frame.paragraphs[0].font.size == Pt(9)
+
+    def test_an_explicit_font_size_beats_the_template(self, registry):
+        self._register(registry, {"table": {"font_size": 9}})
+        table = self._table_of(build(
+            [{"type": "table", "rows": self.TABLE, "font_size": 14}], template="brand"))
+        assert table.cell(1, 0).text_frame.paragraphs[0].font.size == Pt(14)
+
+    def test_a_non_numeric_font_size_is_reported_not_crashed(self, registry):
+        self._register(registry, {"table": {"font_size": "big"}})
+        pres = build([{"type": "table", "rows": self.TABLE}], template="brand")
+        assert any("font_size 'big' is not a number" in w for w in pres.warnings)
+
+    def test_an_out_of_range_font_size_is_clamped_and_reported(self, registry):
+        """A template value bypasses the schema's 6–40 bound; a typo of 200 was
+        applied verbatim. Review flagged the asymmetry with the non-numeric guard."""
+        self._register(registry, {"table": {"font_size": 200}})
+        pres = build([{"type": "table", "rows": self.TABLE}], template="brand")
+        table = self._table_of(pres)
+        assert table.cell(1, 0).text_frame.paragraphs[0].font.size == Pt(40)
+        assert any("outside 6–40; used 40" in w for w in pres.warnings)
+
+    def test_a_quoted_false_in_yaml_still_turns_zebra_off(self, registry):
+        """YAML `zebra: "false"` is the string "false", and bool("false") is True."""
+        self._register(registry, {"table": {"zebra": "false"}})
+        table = self._table_of(build([{"type": "table", "rows": self.TABLE}], template="brand"))
+        assert "<a:solidFill>" not in table.cell(2, 0)._tc.xml
+
+    def test_a_quoted_true_in_yaml_turns_data_labels_on(self, registry):
+        self._register(registry, {"chart": {"data_labels": "true"}})
+        chart = self._chart_of(build([{"type": "chart", **self.CHART}], template="brand"))
+        assert chart.plots[0].has_data_labels
+
+    def test_an_unrecognised_boolean_is_reported_and_the_built_in_used(self, registry):
+        self._register(registry, {"table": {"zebra": "maybe"}})
+        pres = build([{"type": "table", "rows": self.TABLE}], template="brand")
+        assert "<a:solidFill>" in self._table_of(pres).cell(2, 0)._tc.xml   # built-in: on
+        assert any("zebra 'maybe' is not true/false" in w for w in pres.warnings)
+
+    def test_data_labels_from_the_template(self, registry):
+        self._register(registry, {"chart": {"data_labels": True}})
+        chart = self._chart_of(build([{"type": "chart", **self.CHART}], template="brand"))
+        assert chart.plots[0].has_data_labels
+
+    def test_data_labels_off_in_the_call_beats_a_template_that_turns_them_on(self, registry):
+        self._register(registry, {"chart": {"data_labels": True}})
+        chart = self._chart_of(build(
+            [{"type": "chart", "data_labels": False, **self.CHART}], template="brand"))
+        assert not chart.plots[0].has_data_labels
+
+    def test_without_template_defaults_the_built_ins_still_apply(self, registry):
+        self._register(registry, {})
+        table = self._table_of(build([{"type": "table", "rows": self.TABLE}], template="brand"))
+        assert str(table.cell(0, 0).fill.fore_color.rgb) == "4172C4"
+        assert "<a:solidFill>" in table.cell(2, 0)._tc.xml
 
 
 # =============================================================================

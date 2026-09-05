@@ -41,7 +41,7 @@ Just ask your AI to _"create a sales presentation"_ or _"draft a welcome email"_
 
 | Document Type | Tool | Highlights |
 |:---:|---|---|
-| 📊 **PowerPoint** | `create_powerpoint_presentation` | Typed slide schema (13 slide types incl. KPI, timeline, agenda) · Markdown bullet bodies · Tables, category charts & XY scatter · Inline & data-URI images · Theme colours · Autofit with overflow warnings · Proofing language · 4:3 or 16:9 · Custom templates |
+| 📊 **PowerPoint** | `create_powerpoint_presentation` | Typed slide schema (14 slide types incl. KPI, timeline, agenda, free-form blank) · Outline-pane sections · Markdown bullet bodies · Tables, category charts & XY scatter · Inline & data-URI images · Theme colours · Autofit with overflow warnings · Proofing language · 4:3 or 16:9 · Custom templates |
 | 📝 **Word** | `create_word_from_markdown` | Write in Markdown, get a `.docx` · Headings, lists (with auto-restart), tables, links, images, block quotes, page breaks & text alignment · Superscript, subscript, underline & highlighted text · Table column alignment, borderless tables, proportional widths & multi-paragraph cells · Headers/footers with page numbers · Table of Contents · Custom style mapping & per-block style tags |
 | 📈 **Excel** | `create_excel_from_markdown` | Markdown tables → `.xlsx` · Multiple sheets · Formulas with table-relative & cross-sheet references · Column data types · Freeze panes & auto-filter · Column alignment |
 | 📧 **Email** | `create_email_draft` | HTML email drafts (`.eml`) · Subject, recipients, priority, language |
@@ -303,6 +303,11 @@ Every slide takes `type` plus optional `title`, `notes` (speaker notes) and `lay
 | `timeline` | `steps` (`{label, detail?}`), `style?` (`chevron` or `box`) |
 | `agenda` | `items?` — omit to build it from the deck's own `section` slides |
 | `closing` | `subtitle?`, `contact?` |
+| `blank` | `elements` — positioned items, each `{kind: text\|image\|shape, x, y, w, h?}` with lengths in inches (`1.5`, `"1.5in"`) or as a share of the slide (`"40%"`) |
+
+**Sections.** Every `section` slide also starts a section in PowerPoint's outline pane and slide sorter, so the presenter sees the deck's structure rather than a flat list. Slides before the first section slide go in a "Default Section", as PowerPoint would name it.
+
+**Blank slides** are the escape hatch for the one layout no typed slide fits. Elements draw in order, so a later one sits on top; a `text` element takes the same inline markdown as a bullet, a `shape` is one of `rectangle`, `rounded_rectangle`, `ellipse`, `chevron`, `arrow` with an optional `fill` and centred `text`, and an `image` keeps its aspect ratio within its box. Anything that would run past the slide edge is shrunk to fit and reported in `warnings`; anything starting off the slide is skipped and reported.
 
 **Body text.** `body` takes either a Markdown bullet string or explicit bullet objects. Prefer the string:
 
@@ -313,7 +318,7 @@ Every slide takes `type` plus optional `title`, `notes` (speaker notes) and `lay
 
 Indent child items with any consistent unit — two spaces, four spaces or a tab. A line without a `-` marker becomes a top-level bullet. The explicit form is `[{"text": "…", "level": 2}]`, where `level` is 1 (outermost) to 5.
 
-**Inline formatting** works in every text field, table cells included: `**bold**`, `*italic*`, `***bold italic***`, `~~strikethrough~~`, `__underline__`, `` `code` ``, and `[links](https://example.com)`. A marker only formats when it hugs its text (`**bold**`, not `** bold **`), so prose like `5 * 3 * 2 = 30` is left alone. Escape a literal marker with `\*`, or wrap it in backticks.
+**Inline formatting** works in every text field, table cells included: `**bold**`, `*italic*`, `***bold italic***`, `~~strikethrough~~`, `__underline__`, `` `code` ``, `^superscript^`, `~subscript~`, and `[links](https://example.com)`. The same grammar drives the Word tool, so text formats identically in both. A marker only formats when it hugs its text (`**bold**`, not `** bold **`), so prose like `5 * 3 * 2 = 30` is left alone. Escape a literal marker with `\*`, or wrap it in backticks.
 
 **Tables** take raw values — numbers and `null` are fine, not just strings:
 

@@ -45,7 +45,15 @@ Thumbs.db
 # Output directory
 output/
 custom_templates/
-config/
+# Ignore the *contents* of config/, not the directory: a file under an
+# excluded directory can never be re-included, and `config/` wholesale is
+# what silently dropped pptx_templates.yaml for two releases. The master
+# registry files are documentation and must ship; the UI-managed *.d/
+# directories and anything else stay local.
+config/*
+!config/docx_templates.yaml
+!config/email_templates.yaml
+!config/pptx_templates.yaml
 
 # Temporary files
 *.tmp

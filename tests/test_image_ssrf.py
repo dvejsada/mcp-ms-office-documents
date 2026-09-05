@@ -27,7 +27,7 @@ import pytest
 
 import requests
 
-from pptx_tools.image_utils import (
+from image_utils import (
     REQUEST_TIMEOUT,
     SSRFProtectionError,
     _get_following_redirects,
@@ -39,7 +39,7 @@ from pptx_tools.image_utils import (
 @pytest.fixture(autouse=True)
 def _protection_enabled():
     """Run every test with protection on unless it opts out."""
-    with patch("pptx_tools.image_utils.get_config") as get_config:
+    with patch("image_utils.get_config") as get_config:
         get_config.return_value.allow_private_image_addresses = False
         yield get_config
 
@@ -113,7 +113,7 @@ def test_url_without_hostname_is_rejected():
 def test_redirect_to_private_address_is_blocked():
     """A public URL must not be able to bounce the request onto loopback."""
     with patch.object(socket, "getaddrinfo", _resolver({"example.com": ["93.184.216.34"]})):
-        with patch("pptx_tools.image_utils.requests.get") as get:
+        with patch("image_utils.requests.get") as get:
             get.return_value.is_redirect = True
             get.return_value.headers = {"Location": "http://127.0.0.1/secret.png"}
             with pytest.raises(SSRFProtectionError):
@@ -136,7 +136,7 @@ def test_intermediate_redirect_responses_are_closed():
     final.iter_content.return_value = [b"image-bytes"]
 
     with patch.object(socket, "getaddrinfo", _resolver({"example.com": ["93.184.216.34"]})):
-        with patch("pptx_tools.image_utils.requests.get", side_effect=[redirect, final]):
+        with patch("image_utils.requests.get", side_effect=[redirect, final]):
             download_image("https://example.com/image.png")
 
     redirect.close.assert_called_once()
@@ -149,8 +149,8 @@ def test_redirect_chain_shares_one_timeout_budget():
     clock = iter([0.0, 0.0, REQUEST_TIMEOUT + 1])
 
     with patch.object(socket, "getaddrinfo", _resolver({"example.com": ["93.184.216.34"]})):
-        with patch("pptx_tools.image_utils.time.monotonic", lambda: next(clock)):
-            with patch("pptx_tools.image_utils.requests.get", return_value=redirect):
+        with patch("image_utils.time.monotonic", lambda: next(clock)):
+            with patch("image_utils.requests.get", return_value=redirect):
                 with pytest.raises(requests.exceptions.Timeout):
                     _get_following_redirects("https://example.com/image.png")
 
@@ -167,8 +167,8 @@ def test_each_hop_gets_only_the_remaining_budget():
         return redirect if len(timeouts) == 1 else final
 
     with patch.object(socket, "getaddrinfo", _resolver({"example.com": ["93.184.216.34"]})):
-        with patch("pptx_tools.image_utils.time.monotonic", lambda: next(clock)):
-            with patch("pptx_tools.image_utils.requests.get", _get):
+        with patch("image_utils.time.monotonic", lambda: next(clock)):
+            with patch("image_utils.requests.get", _get):
                 _get_following_redirects("https://example.com/image.png")
 
     assert timeouts == [REQUEST_TIMEOUT, REQUEST_TIMEOUT - 10.0]
