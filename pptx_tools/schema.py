@@ -573,6 +573,11 @@ def slide_from_text(text: str) -> Dict[str, Any]:
     if first_index is None:
         return {"type": "content"}
 
+    if _MD_BULLET_RE.match(lines[first_index]):
+        # Bullets with no heading above them: all body, no title. Reading the
+        # first bullet as the title would eat it and leak its '-' marker.
+        return {"type": "content", "body": "\n".join(lines[first_index:]).strip("\n")}
+
     first, rest = lines[first_index].strip(), lines[first_index + 1:]
     heading = _MD_HEADING_RE.match(first)
     level = len(heading.group(1)) if heading else None
@@ -592,19 +597,25 @@ def slide_from_text(text: str) -> Dict[str, Any]:
     return slide
 
 
-def _coerce_slide_input(value: Any) -> Any:
+def _coerce_slide_input(value: Any, index: int) -> Any:
     """Turn a slide given as a string into the dict it stands for."""
     if not isinstance(value, str):
         return value
     text = value.strip()
-    if text.startswith("{") and text.endswith("}"):
+    if text.startswith("{"):
+        # A string this shape is meant to be an object, so a parse failure is a
+        # truncated or malformed payload, not markdown. Reading it as markdown
+        # would build a slide titled with the raw JSON and report success.
         try:
             parsed = json.loads(text)
-        except ValueError:
-            pass
-        else:
-            if isinstance(parsed, dict):
-                return parsed
+        except ValueError as exc:
+            raise ValueError(
+                f"slide {index} was sent as a string that starts like JSON but "
+                f"does not parse ({exc}). Send the slide as an object."
+            ) from exc
+        if isinstance(parsed, dict):
+            return parsed
+        raise ValueError(f"slide {index}: expected a JSON object, got {type(parsed).__name__}")
     return slide_from_text(value)
 
 
@@ -613,16 +624,17 @@ def _migrate_list(value: Any) -> Any:
     # level up; a bare string that is not JSON is a one-slide deck.
     if isinstance(value, str):
         text = value.strip()
-        parsed: Any = None
         if text.startswith("[") or text.startswith("{"):
             try:
                 parsed = json.loads(text)
-            except ValueError:
-                parsed = None
-        if isinstance(parsed, list):
-            value = parsed
-        elif isinstance(parsed, dict):
-            value = [parsed]
+            except ValueError as exc:
+                # A truncated deck must not collapse into one slide titled with
+                # the raw JSON; the caller has to hear that slides were lost.
+                raise ValueError(
+                    f"the deck was sent as one string that starts like JSON but "
+                    f"does not parse ({exc}). Send slides as a list of objects."
+                ) from exc
+            value = parsed if isinstance(parsed, list) else [parsed]
         else:
             value = [value]
 
@@ -631,7 +643,8 @@ def _migrate_list(value: Any) -> Any:
     seen: set = set()
     text_slides = sum(1 for slide in value if isinstance(slide, str))
     migrated = [
-        migrate_legacy_slide(_coerce_slide_input(slide), seen) for slide in value
+        migrate_legacy_slide(_coerce_slide_input(slide, index), seen)
+        for index, slide in enumerate(value)
     ]
     if text_slides:
         logger.info(
@@ -715,6 +728,8 @@ def _simplify(node: Any) -> Any:
             out[key] = {name: _simplify(sub) for name, sub in value.items()}
         elif key == "oneOf":
             out["anyOf"] = _simplify(value)
+        elif key == "const":  # a Literal; every dialect reads a one-value enum
+            out["enum"] = [value]
         else:
             out[key] = _simplify(value)
 
@@ -730,12 +745,25 @@ def _simplify(node: Any) -> Any:
     return out
 
 
+def _label(types: List[str]) -> str:
+    return "[all types]" if set(types) == set(SLIDE_TYPES) else f"[{', '.join(types)}]"
+
+
 def _property_description(by_description: Dict[str, List[str]]) -> str:
-    """Describe one field as '[types] its description', once per wording."""
+    """Describe one field as '[types] its description', once per wording.
+
+    A type that declares the field without a description of its own (scatter's
+    ``legend``) joins the first described group rather than trailing a bare
+    ``[scatter]`` that says nothing.
+    """
+    described = {text: types for text, types in by_description.items() if text}
+    silent = [t for text, types in by_description.items() if not text for t in types]
+    if not described:
+        return _label(silent)
+
     parts = []
-    for description, types in by_description.items():
-        label = "[all types]" if set(types) == set(SLIDE_TYPES) else f"[{', '.join(types)}]"
-        parts.append(f"{label} {description}".strip() if description else label)
+    for position, (description, types) in enumerate(described.items()):
+        parts.append(f"{_label(types + silent if position == 0 else types)} {description}")
     return " ".join(parts)
 
 
@@ -825,13 +853,18 @@ SlidesInput = Annotated[List[SlideInput], BeforeValidator(_migrate_list)]
 def _describe_error(error: Dict[str, Any]) -> str:
     """Render one pydantic error as 'slide 2 -> rows.0: message'."""
     loc = [str(part) for part in error.get("loc", ())]
+    message = error.get("msg", "invalid")
+    # Errors raised while reading the list itself (a string deck that is not
+    # JSON) carry no path and already name the slide they are about.
+    if not loc:
+        return message.removeprefix("Value error, ")
     # Drop the union-member tag pydantic injects so the path reads naturally.
-    index = loc[0] if loc else "?"
+    index = loc[0]
     rest = [part for part in loc[1:] if part not in SLIDE_TYPES]
     where = f"slide {index}"
     if rest:
         where += " -> " + ".".join(rest)
-    return f"{where}: {error.get('msg', 'invalid')}"
+    return f"{where}: {message}"
 
 
 def coerce_slides(slides: Any) -> List[Any]:

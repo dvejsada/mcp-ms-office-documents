@@ -37,11 +37,32 @@ def schema():
 
 class TestPublishedSchema:
 
-    def test_one_plain_object_no_union_keywords(self, schema):
+    def test_only_portable_keywords(self, schema):
+        """Every keyword in the published schema must survive the trip.
+
+        Walks schema positions rather than the rendered JSON, so a field *named*
+        like a keyword ('type', 'items') is not mistaken for one.
+        """
+        def keywords(node):
+            if isinstance(node, list):
+                for item in node:
+                    yield from keywords(item)
+            elif isinstance(node, dict):
+                for key, value in node.items():
+                    if key in ("properties", "$defs"):
+                        for sub in value.values():
+                            yield from keywords(sub)
+                        continue
+                    yield key
+                    yield from keywords(value)
+
         assert schema["type"] == "object"
-        rendered = json.dumps(schema)
-        for keyword in ("oneOf", "$ref", "$defs", "discriminator"):
-            assert keyword not in rendered, f"{keyword} does not survive every client"
+        unportable = {
+            "oneOf", "$ref", "$defs", "discriminator", "const", "allOf", "not",
+            "if", "then", "else", "patternProperties", "prefixItems", "additionalItems",
+        }
+        found = unportable & set(keywords(schema))
+        assert not found, f"{sorted(found)} do not survive every client"
 
     def test_type_is_an_enum_of_every_slide_type(self, schema):
         assert set(schema["properties"]["type"]["enum"]) == set(SLIDE_TYPES)
@@ -58,6 +79,12 @@ class TestPublishedSchema:
         assert "[image]" in schema["properties"]["source"]["description"]
         # Shared fields are not spelled out fourteen times.
         assert "[all types]" in schema["properties"]["title"]["description"]
+
+    def test_a_type_that_describes_nothing_joins_the_described_group(self, schema):
+        """scatter declares 'legend' without a description of its own."""
+        description = schema["properties"]["legend"]["description"]
+        assert description.startswith("[chart, scatter] ")
+        assert not description.endswith("[scatter]")
 
     def test_fields_two_types_spell_differently_offer_both_shapes(self, schema):
         def item_properties(shape):
@@ -138,9 +165,31 @@ class TestTextSlides:
         assert len(pres.slides) == 3
         assert pres.save().getvalue()[:2] == b"PK"
 
-    def test_malformed_json_is_read_as_markdown_not_rejected(self):
-        slide = coerce_slides(['{"type": "quote", "text": '])[0]
-        assert slide.type == "content"
+    def test_bullets_with_no_heading_are_all_body(self):
+        """The first bullet is not a title: it would lose the item and its marker."""
+        assert slide_from_text("- point one\n- point two") == {
+            "type": "content", "body": "- point one\n- point two",
+        }
+
+    def test_a_slide_that_starts_like_json_must_be_json(self):
+        with pytest.raises(ValueError) as excinfo:
+            coerce_slides(['{"type": "quote", "text": '])
+        assert "slide 0" in str(excinfo.value)
+        assert "does not parse" in str(excinfo.value)
+
+    def test_a_truncated_deck_is_reported_not_collapsed(self):
+        """A deck cut short by the client must not become one slide of raw JSON."""
+        with pytest.raises(ValueError) as excinfo:
+            coerce_slides('[{"type": "title", "title": "A"}, {"type": "content"')
+        assert "does not parse" in str(excinfo.value)
+
+    def test_the_error_reads_as_one_sentence(self):
+        """No pydantic scaffolding ('slide ?: Value error, …') around the message."""
+        with pytest.raises(ValueError) as excinfo:
+            coerce_slides('[{"type": "title"')
+        message = str(excinfo.value)
+        assert message.startswith("Invalid slides: the deck was sent as one string")
+        assert "Value error" not in message
 
 
 # =============================================================================
@@ -198,6 +247,14 @@ class TestToolBoundary:
         assert result.is_error
         message = result.content[0].text
         assert "slide 0" in message and "txt" in message
+
+    async def test_a_truncated_deck_string_reaches_the_client_as_an_error(self, monkeypatch):
+        result, captured = await self.call(
+            monkeypatch, slides='[{"type": "title", "title": "A"}, {"type": "content"',
+        )
+        assert result.is_error
+        assert "does not parse" in result.content[0].text
+        assert "bytes" not in captured, "a truncated deck must not be built and uploaded"
 
     async def test_an_unknown_type_names_the_valid_ones(self, monkeypatch):
         result, _ = await self.call(monkeypatch, slides=[{"type": "bullets", "title": "x"}])
