@@ -8,7 +8,10 @@ from .chart_utils import (
     add_chart_to_slide, add_scatter_to_slide,
     CHART_TYPE_MAP, UNSUPPORTED_CHART_TYPES, ChartDataError,
 )
-from .schema import AnySlide, Slides, SLIDE_TYPES, coerce_slides
+from .schema import (
+    AnySlide, Slides, SlidesInput, SLIDE_TYPES,
+    coerce_slides, flat_slide_schema, slide_from_text,
+)
 
 __all__ = [
     "create_presentation",
@@ -26,6 +29,9 @@ __all__ = [
     "ChartDataError",
     "AnySlide",
     "Slides",
+    "SlidesInput",
     "SLIDE_TYPES",
     "coerce_slides",
+    "flat_slide_schema",
+    "slide_from_text",
 ]

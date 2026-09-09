@@ -351,6 +351,10 @@ Indent child items with any consistent unit — two spaces, four spaces or a tab
 
 **Compatibility.** The previous key names (`slide_type`, `slide_title`, `slide_text`, `indentation_level`, `speaker_notes`, `table_data`, `alternate_rows`, `image_url`, `image_caption`, `quote_text`, `quote_author`, `left_column`, `right_column`, `chart_data`, `has_legend`, `legend_position`) are still accepted and mapped onto the current ones, with a note in the log. They will be removed in a future release.
 
+**Clients that cannot send objects.** `slides` is published as one flat object schema — every field of every slide type in a single `properties` map, each saying which types accept it — rather than as a `oneOf` union of the fourteen types. A union is the better model but not a portable declaration: clients that bridge MCP to a provider without `oneOf`/`$ref` drop what they cannot express, show the model `slides: array of string`, and then reject the call against the union they kept, so *every* call fails with a schema error no matter what the model sends. Validation is unchanged — it runs on this server, against the union, and names the slide and field it rejected.
+
+As a last resort a slide sent as a **string** is read rather than refused: a JSON object is the slide it encodes, and anything else is markdown for one slide (`# Heading` plus text is a `title` slide, otherwise a `content` slide with the rest as its body). The whole deck arriving as one JSON string is unpacked the same way. This fallback covers titles and bullets only — send slide objects for everything else.
+
 </details>
 
 <details>

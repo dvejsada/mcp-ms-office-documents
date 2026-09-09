@@ -60,11 +60,13 @@ def body_paragraphs(slide):
 class TestSchemaShape:
 
     def test_json_schema_is_discriminated(self):
+        """The union is what validates input; what the tool *publishes* is the
+        flat schema covered by ``test_pptx_client_compat.py``."""
         schema = _SLIDES_ADAPTER.json_schema()
         items = schema.get("items", schema)
         assert "oneOf" in items
         assert "discriminator" in items
-        # One definition per slide type, so the model sees each type's fields.
+        # One definition per slide type, so each type's fields are modelled.
         assert len(schema["$defs"]) >= len(SLIDE_TYPES)
 
     def test_every_slide_type_is_reachable(self):

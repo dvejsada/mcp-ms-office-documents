@@ -28,9 +28,11 @@ Design notes
 
 from __future__ import annotations
 
+import json
 import logging
 import re
-from typing import Annotated, Any, Dict, List, Literal, Optional, Union
+from functools import lru_cache
+from typing import Annotated, Any, Dict, List, Literal, Optional, Tuple, Union
 
 from pydantic import (
     BaseModel,
@@ -39,6 +41,7 @@ from pydantic import (
     Field,
     TypeAdapter,
     ValidationError,
+    WithJsonSchema,
     field_validator,
 )
 
@@ -542,11 +545,101 @@ def migrate_legacy_slide(slide: Any, seen: Optional[set] = None) -> Any:
     return out
 
 
+# =============================================================================
+# Text slides — the client-compatibility shim
+# =============================================================================
+# Some MCP clients cannot represent a slide object at all: they flatten the
+# tool's array parameter down to an array of strings (a discriminated union has
+# no equivalent in every provider's function-calling dialect), and the model
+# then sends the deck as JSON strings or as plain markdown. Rather than fail
+# such a call, read the string: a JSON object is the slide it encodes, anything
+# else is markdown for one slide. The published schema still asks for objects —
+# this is a fallback, not a documented second spelling.
+
+_MD_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*$")
+_MD_BULLET_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
+
+
+def slide_from_text(text: str) -> Dict[str, Any]:
+    """Read one slide out of a markdown fragment.
+
+    A first line of ``# Heading`` with no bullets under it is a title slide and
+    the rest is its subtitle; everything else is a content slide whose body is
+    the remaining markdown, which :func:`~pptx_tools.helpers.body_to_bullets`
+    already knows how to read.
+    """
+    lines = text.splitlines()
+    first_index = next((i for i, line in enumerate(lines) if line.strip()), None)
+    if first_index is None:
+        return {"type": "content"}
+
+    first, rest = lines[first_index].strip(), lines[first_index + 1:]
+    heading = _MD_HEADING_RE.match(first)
+    level = len(heading.group(1)) if heading else None
+    title = heading.group(2).strip() if heading else first
+
+    body = "\n".join(rest).strip("\n")
+    if level == 1 and not any(_MD_BULLET_RE.match(line) for line in rest):
+        subtitle = " ".join(line.strip() for line in rest if line.strip())
+        slide: Dict[str, Any] = {"type": "title", "title": title}
+        if subtitle:
+            slide["subtitle"] = subtitle
+        return slide
+
+    slide = {"type": "content", "title": title}
+    if body.strip():
+        slide["body"] = body
+    return slide
+
+
+def _coerce_slide_input(value: Any) -> Any:
+    """Turn a slide given as a string into the dict it stands for."""
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    if text.startswith("{") and text.endswith("}"):
+        try:
+            parsed = json.loads(text)
+        except ValueError:
+            pass
+        else:
+            if isinstance(parsed, dict):
+                return parsed
+    return slide_from_text(value)
+
+
 def _migrate_list(value: Any) -> Any:
+    # A whole deck arriving as one JSON string is the same client problem one
+    # level up; a bare string that is not JSON is a one-slide deck.
+    if isinstance(value, str):
+        text = value.strip()
+        parsed: Any = None
+        if text.startswith("[") or text.startswith("{"):
+            try:
+                parsed = json.loads(text)
+            except ValueError:
+                parsed = None
+        if isinstance(parsed, list):
+            value = parsed
+        elif isinstance(parsed, dict):
+            value = [parsed]
+        else:
+            value = [value]
+
     if not isinstance(value, list):
         return value
     seen: set = set()
-    migrated = [migrate_legacy_slide(slide, seen) for slide in value]
+    text_slides = sum(1 for slide in value if isinstance(slide, str))
+    migrated = [
+        migrate_legacy_slide(_coerce_slide_input(slide), seen) for slide in value
+    ]
+    if text_slides:
+        logger.info(
+            "[pptx] Read %d slide(s) given as text rather than objects. The tool "
+            "takes slide objects; a client that cannot send them gets this "
+            "fallback, which supports titles and bullets only.",
+            text_slides,
+        )
     if seen:
         logger.info(
             "[pptx] Accepted deprecated slide keys (%s). The current names are "
@@ -560,6 +653,169 @@ def _migrate_list(value: Any) -> Any:
 Slides = Annotated[List[AnySlide], BeforeValidator(_migrate_list)]
 
 _SLIDES_ADAPTER: TypeAdapter = TypeAdapter(Slides)
+
+
+# =============================================================================
+# The published schema
+# =============================================================================
+# The union above is the right model of a slide and the wrong thing to publish.
+# ``oneOf`` + ``$ref`` + ``discriminator`` has no equivalent in several
+# providers' function-calling dialects, and clients that bridge to them drop
+# what they cannot express: the model is shown ``slides: array of string`` while
+# the client keeps validating against the union it was given, so every call is
+# rejected before it reaches this server ("tool input did not match expected
+# schema") no matter what the model sends.
+#
+# So the tool publishes one flat object schema instead — every field of every
+# slide type in a single ``properties`` map, each one saying which types accept
+# it — and validation still runs against the union here, where the error message
+# can name the slide and the field. Nothing about what the server accepts
+# changes; only how it is described.
+
+
+def _slide_type_of(model: type) -> str:
+    return model.model_fields["type"].annotation.__args__[0]
+
+
+def _inline_refs(node: Any, defs: Dict[str, Any], seen: Tuple[str, ...] = ()) -> Any:
+    """Return *node* with every ``$ref`` replaced by its definition."""
+    if isinstance(node, dict):
+        ref = node.get("$ref")
+        if ref is not None:
+            name = ref.rsplit("/", 1)[-1]
+            if name in seen:  # no model is recursive today; do not loop if one becomes so
+                return {"type": "object"}
+            target = _inline_refs(defs.get(name, {}), defs, seen + (name,))
+            extra = {k: v for k, v in node.items() if k != "$ref"}
+            return {**target, **extra}
+        return {key: _inline_refs(value, defs, seen) for key, value in node.items()}
+    if isinstance(node, list):
+        return [_inline_refs(item, defs, seen) for item in node]
+    return node
+
+
+def _simplify(node: Any) -> Any:
+    """Reduce a generated schema to the keywords every client dialect reads.
+
+    Generated titles go; ``oneOf`` becomes ``anyOf`` and a nested ``anyOf`` is
+    flattened into its parent (``Optional[Body]`` produces one); ``discriminator``
+    goes with them, since inlining the definitions it points at leaves its
+    ``mapping`` dangling.
+    """
+    if isinstance(node, list):
+        return [_simplify(item) for item in node]
+    if not isinstance(node, dict):
+        return node
+
+    out: Dict[str, Any] = {}
+    for key, value in node.items():
+        if key in ("title", "discriminator"):  # keywords here, never field names
+            continue
+        if key in ("properties", "$defs") and isinstance(value, dict):
+            out[key] = {name: _simplify(sub) for name, sub in value.items()}
+        elif key == "oneOf":
+            out["anyOf"] = _simplify(value)
+        else:
+            out[key] = _simplify(value)
+
+    members = out.get("anyOf")
+    if isinstance(members, list):
+        flat: List[Any] = []
+        for member in members:
+            nested = member["anyOf"] if set(member) == {"anyOf"} else [member]
+            for option in nested:
+                if option not in flat:
+                    flat.append(option)
+        out["anyOf"] = flat
+    return out
+
+
+def _property_description(by_description: Dict[str, List[str]]) -> str:
+    """Describe one field as '[types] its description', once per wording."""
+    parts = []
+    for description, types in by_description.items():
+        label = "[all types]" if set(types) == set(SLIDE_TYPES) else f"[{', '.join(types)}]"
+        parts.append(f"{label} {description}".strip() if description else label)
+    return " ".join(parts)
+
+
+@lru_cache(maxsize=1)
+def flat_slide_schema() -> Dict[str, Any]:
+    """One object schema covering every slide type, for the tool's parameter."""
+    variants: Dict[str, List[Dict[str, Any]]] = {}
+    described: Dict[str, Dict[str, List[str]]] = {}
+    required: Dict[str, List[str]] = {}
+
+    for model in _SLIDE_MODELS:
+        raw = dict(model.model_json_schema())
+        defs = raw.pop("$defs", {})
+        schema = _inline_refs(raw, defs)
+        slide_type = _slide_type_of(model)
+        required[slide_type] = [
+            name for name in schema.get("required", ()) if name != "type"
+        ]
+        for name, prop in schema.get("properties", {}).items():
+            if name == "type":
+                continue
+            prop = _simplify({k: v for k, v in prop.items() if k != "description"})
+            described.setdefault(name, {}).setdefault(
+                schema["properties"][name].get("description", ""), []
+            ).append(slide_type)
+            shapes = variants.setdefault(name, [])
+            if prop not in shapes:
+                shapes.append(prop)
+
+    properties: Dict[str, Any] = {
+        "type": {
+            "type": "string",
+            "enum": list(SLIDE_TYPES),
+            "description": "Which kind of slide this is; it decides which other fields apply.",
+        },
+    }
+    for name in sorted(variants):
+        shapes = variants[name]
+        if len(shapes) == 1:
+            prop = dict(shapes[0])
+        else:
+            # Two types spell the same field differently (kpi/agenda 'items',
+            # chart/scatter 'series'). Offer both shapes; their per-type
+            # defaults are meaningless once merged, so leave them out.
+            merged = []
+            for shape in shapes:
+                shape = {k: v for k, v in shape.items() if k != "default"}
+                if shape not in merged:
+                    merged.append(shape)
+            prop = _simplify({"anyOf": merged}) if len(merged) > 1 else dict(merged[0])
+        prop["description"] = _property_description(described[name])
+        properties[name] = prop
+
+    # Keep the fields every slide shares at the front, where a reader looks.
+    ordered = {key: properties[key] for key in ("type", "title", "notes", "layout") if key in properties}
+    ordered.update({k: v for k, v in properties.items() if k not in ordered})
+
+    needed = "; ".join(
+        f"{slide_type}: {', '.join(fields)}"
+        for slide_type, fields in sorted(required.items())
+        if fields
+    )
+    return {
+        "type": "object",
+        "description": (
+            "One slide. 'type' selects the shape; each field below names the types "
+            "that accept it, and a field belonging to another type is rejected. "
+            f"Fields required in addition to 'type' — {needed}. Every other type "
+            "needs only 'type', with the rest optional."
+        ),
+        "properties": ordered,
+        "required": ["type"],
+        "additionalProperties": False,
+    }
+
+
+# What the tool declares: a list of slide objects, described flatly, validated
+# strictly (by ``coerce_slides``, reached through the builder) once it arrives.
+SlideInput = Annotated[Any, WithJsonSchema(flat_slide_schema())]
+SlidesInput = Annotated[List[SlideInput], BeforeValidator(_migrate_list)]
 
 
 # =============================================================================
