@@ -6,7 +6,7 @@ from pydantic import Field
 from xlsx_tools import _markdown_to_excel_buffer
 from docx_tools import _markdown_to_word_buffer
 from docx_tools.dynamic_docx_tools import register_docx_template_tools_from_yaml
-from pptx_tools import _create_presentation_buffer, Slides
+from pptx_tools import _create_presentation_buffer, SlidesInput
 from pptx_tools.templates import load_specs as load_template_specs, validate_templates
 from email_tools import _create_eml_buffer
 from email_tools.dynamic_email_tools import register_email_template_tools_from_yaml
@@ -303,10 +303,11 @@ async def create_word_document(
     annotations={"title": "PowerPoint Presentation Creator"}
 )
 async def create_powerpoint_presentation(
-    slides: Annotated[Slides, Field(
+    slides: Annotated[SlidesInput, Field(
         description=(
-            "Ordered list of slides. Each slide's 'type' selects its shape; the schema for "
-            "every type is given above, so only the rules it cannot express are repeated here.\n"
+            "Ordered list of slide objects. Each slide's 'type' selects its shape, and the "
+            "item schema lists every field with the types that accept it, so only the rules "
+            "it cannot express are repeated here.\n"
             "\n"
             "BODY TEXT ('body' on content slides and on each side of two_column): either a markdown "
             "bullet string or explicit bullet objects. Prefer the string — write '- item' per line and "

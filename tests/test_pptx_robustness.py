@@ -139,9 +139,15 @@ class TestUnknownSlideType:
         pres = build(slides)
         assert len(reload_presentation(pres).slides) == len(slides)
 
+    def test_text_slide_is_read_not_rejected(self):
+        """A client that can only send strings still gets its deck."""
+        pres = build(["## A heading\n- a bullet"])
+        assert pres.slides[0].type == "content"
+        assert pres.slides[0].title == "A heading"
+
     def test_non_dict_slide_raises(self):
         with pytest.raises(ValueError, match="valid dictionary or object"):
-            build(["just a string"])
+            build([42])
 
 
 # =============================================================================
